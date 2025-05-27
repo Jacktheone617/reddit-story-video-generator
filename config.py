@@ -1,0 +1,4 @@
+# config.py
+REDDIT_CLIENT_ID = "Di7pRK2Crxr5f_yPrWSn3g"
+REDDIT_CLIENT_SECRET = "wVN23XwvL7wT9fRvHE4PhbGt6F_NEA"
+REDDIT_USER_AGENT = "TikTokVideoGenerator/1.0 by munir369"
