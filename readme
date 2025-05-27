@@ -56,7 +56,7 @@ REDDIT_USER_AGENT = "VideoBot/1.0 by YourUsername"
 ### 6. Add Background Video
 - Place your gameplay video as `background.mp4` in the project folder
 - Or modify the `BACKGROUND_VIDEO_PATH` in the script
-
+- also create  output_videos folder in same directory
 ### 7. Run the Generator
 ```bash
 python reddit_video_generator.py
