@@ -152,7 +152,7 @@ Uncomment this line in the script:
 generator.clear_database()  # Uncomment to reprocess old posts
 ```
 
-
+git push origin main
 ```
 
 ## Troubleshooting
