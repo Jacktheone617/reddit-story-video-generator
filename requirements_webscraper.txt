@@ -1,0 +1,22 @@
+# Web Scraping (replaces praw)
+requests>=2.31.0
+beautifulsoup4>=4.12.0
+
+# Text-to-Speech
+gtts>=2.5.0
+edge-tts>=6.1.0
+
+# Audio Processing
+pydub>=0.25.0
+
+# Video Processing
+moviepy>=1.0.3
+numpy>=1.24.0
+imageio>=2.31.0
+imageio-ffmpeg>=0.4.9
+
+# Pillow (required by moviepy)
+Pillow>=10.0.0
+
+# Database
+# sqlite3 is built into Python, no need to install
