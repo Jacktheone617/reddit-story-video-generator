@@ -19,6 +19,14 @@ except ImportError:
     MOVIEPY_VERSION = 1
 
 
+def clean_subtitle_word(word: str) -> str:
+    """Clean a word for subtitle display - remove punctuation and special chars."""
+    import re
+    # Strip leading/trailing punctuation but keep the core word
+    cleaned = re.sub(r'^[^a-zA-Z0-9]+|[^a-zA-Z0-9]+$', '', word)
+    return cleaned if cleaned else word
+
+
 def word_timings_to_segments(word_timings: List[Dict]) -> List[Dict]:
     """
     Convert Edge TTS WordBoundary events directly to subtitle segments.
@@ -31,8 +39,11 @@ def word_timings_to_segments(word_timings: List[Dict]) -> List[Dict]:
     """
     segments = []
     for i, wt in enumerate(word_timings):
+        cleaned = clean_subtitle_word(wt['word'])
+        if not cleaned:
+            continue
         segments.append({
-            'word': wt['word'],
+            'word': cleaned,
             'start': wt['start'],
             'end': wt['start'] + wt['duration'],
             'word_index': i

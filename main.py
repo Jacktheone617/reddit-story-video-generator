@@ -135,12 +135,30 @@ class DynamicTextVideoGenerator:
         return stories
 
     def clean_text_for_speech(self, text: str) -> str:
-        """Clean text for TTS"""
+        """Clean text for TTS - remove characters that get read aloud"""
+        # Remove URLs
         text = re.sub(r'http[s]?://\S+', '', text)
+        # Remove Reddit markdown (bold, italic, strikethrough, superscript)
         text = re.sub(r'\*\*(.*?)\*\*', r'\1', text)
         text = re.sub(r'\*(.*?)\*', r'\1', text)
+        text = re.sub(r'~~(.*?)~~', r'\1', text)
+        text = re.sub(r'\^(\S+)', r'\1', text)
+        # Remove Reddit quotes and HTML entities
         text = re.sub(r'&gt;', '', text)
-        text = re.sub(r'\n+', '. ', text)
+        text = re.sub(r'&amp;', 'and', text)
+        text = re.sub(r'&lt;', '', text)
+        text = re.sub(r'&nbsp;', ' ', text)
+        # Remove characters TTS reads aloud
+        text = re.sub(r'[#~^/\\|@<>{}\[\]()_=+]', '', text)
+        # Remove standalone special chars and leftover markdown
+        text = re.sub(r'(?<!\w)[-](?!\w)', '', text)  # Lone dashes but not hyphens in words
+        # Replace newlines with spaces (not periods - TTS says "period")
+        text = re.sub(r'\n+', ' ', text)
+        # Clean up multiple periods/dots
+        text = re.sub(r'\.{2,}', '.', text)
+        # Remove multiple punctuation in a row
+        text = re.sub(r'([.!?,;:])\s*\1+', r'\1', text)
+        # Collapse whitespace
         text = re.sub(r'\s+', ' ', text)
         return text.strip()
 
@@ -189,30 +207,34 @@ class DynamicTextVideoGenerator:
         """
         Async function to generate Edge TTS audio and capture WordBoundary events.
 
+        Uses SubMaker for proper subtitle timing and saves audio correctly.
+
         Returns:
             List of word timing dicts with keys: word, start (seconds), duration (seconds)
         """
         voice = "en-US-JennyNeural"
 
-        communicate = edge_tts.Communicate(text, voice)
+        communicate = edge_tts.Communicate(text, voice, boundary='WordBoundary')
+        submaker = edge_tts.SubMaker()
 
         word_timings = []
-        audio_bytes = b""
-
-        async for chunk in communicate.stream():
-            if chunk["type"] == "audio":
-                audio_bytes += chunk["data"]
-            elif chunk["type"] == "WordBoundary":
-                word_timings.append({
-                    "word": chunk["text"],
-                    "start": chunk["offset"] / 10_000_000,  # 100-ns units to seconds
-                    "duration": chunk["duration"] / 10_000_000,
-                })
 
         with open(output_path, "wb") as f:
-            f.write(audio_bytes)
+            async for chunk in communicate.stream():
+                if chunk["type"] == "audio":
+                    f.write(chunk["data"])
+                elif chunk["type"] == "WordBoundary":
+                    submaker.feed(chunk)
+                    word_timings.append({
+                        "word": chunk["text"],
+                        "start": chunk["offset"] / 10_000_000,
+                        "duration": chunk["duration"] / 10_000_000,
+                    })
 
         print(f"Captured {len(word_timings)} WordBoundary events from Edge TTS")
+        if word_timings:
+            print(f"  First: '{word_timings[0]['word']}' at {word_timings[0]['start']:.3f}s")
+            print(f"  Last: '{word_timings[-1]['word']}' at {word_timings[-1]['start']:.3f}s")
         return word_timings
 
     def select_random_gameplay(self, gameplay_folder: str) -> str:

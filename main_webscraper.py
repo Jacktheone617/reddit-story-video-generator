@@ -50,10 +50,16 @@ from subtitles import create_dynamic_text_clips
 class DynamicTextVideoGenerator:
     def __init__(self):
         """Initialize the Reddit Video Generator - NO API CREDENTIALS NEEDED"""
-        # No Reddit API initialization needed anymore!
         self.session = requests.Session()
+        # Rotate through modern User-Agents to avoid blocks
+        self.user_agents = [
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36',
+            'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+            'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:133.0) Gecko/20100101 Firefox/133.0',
+        ]
         self.session.headers.update({
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+            'User-Agent': random.choice(self.user_agents)
         })
         
         self.init_database()
@@ -112,93 +118,139 @@ class DynamicTextVideoGenerator:
         ''', (post_id, title, datetime.now(), video_parts))
         self.conn.commit()
     
-    def scrape_reddit_stories(self, subreddit_name: str, limit: int = 5, allow_reprocess: bool = False) -> List[Dict]:
+    def _fetch_reddit_json(self, url: str, params: dict) -> list:
+        """Fetch posts from a Reddit JSON endpoint with User-Agent rotation."""
+        self.session.headers.update({'User-Agent': random.choice(self.user_agents)})
+        response = self.session.get(url, params=params, timeout=10)
+        if response.status_code != 200:
+            print(f"Failed to fetch {url} (status {response.status_code})")
+            return []
+        data = response.json()
+        return data.get('data', {}).get('children', [])
+
+    def scrape_reddit_stories(self, subreddit_name: str, limit: int = 5,
+                              allow_reprocess: bool = False,
+                              min_score: int = 50,
+                              sort: str = "hot") -> List[Dict]:
         """
-        Scrape stories from Reddit using web scraping (NO API NEEDED!)
-        
-        This method scrapes Reddit.com directly without requiring API credentials
+        Scrape stories from Reddit with engagement-ratio filtering.
+
+        Args:
+            subreddit_name: Subreddit to scrape
+            limit: Number of stories to return
+            allow_reprocess: If True, include already-processed posts
+            min_score: Minimum upvote count (default 50 for quality)
+            sort: Sort method - "hot", "top", or "new"
         """
-        print(f"🌐 Web scraping r/{subreddit_name}...")
-        
-        stories = []
-        
+        print(f"Scraping r/{subreddit_name} ({sort})...")
+
+        candidates = []
+
         try:
-            # Reddit's JSON endpoint (publicly accessible, no auth needed)
-            url = f"https://www.reddit.com/r/{subreddit_name}/hot.json"
-            
-            # Add parameters to get more posts
+            url = f"https://www.reddit.com/r/{subreddit_name}/{sort}.json"
             params = {
-                'limit': limit * 3,  # Get extra to filter
-                'raw_json': 1
+                'limit': limit * 5,  # Fetch extra for filtering
+                'raw_json': 1,
             }
-            
-            print(f"Fetching: {url}")
-            response = self.session.get(url, params=params, timeout=10)
-            
-            if response.status_code != 200:
-                print(f"❌ Failed to fetch subreddit. Status code: {response.status_code}")
-                print("Tip: Make sure the subreddit name is correct and publicly accessible")
-                return []
-            
-            data = response.json()
-            
-            # Extract posts from JSON
-            posts = data['data']['children']
-            
+            if sort == "top":
+                params['t'] = 'week'  # Top of the week for fresh content
+
+            posts = self._fetch_reddit_json(url, params)
+
             for post_data in posts:
                 post = post_data['data']
-                
-                # Extract post info
+
                 post_id = post.get('id', '')
                 title = post.get('title', '')
                 selftext = post.get('selftext', '')
                 score = post.get('score', 0)
-                
-                # Skip if already processed
+                num_comments = post.get('num_comments', 0)
+                is_nsfw = post.get('over_18', False)
+
+                # Skip already processed
                 if not allow_reprocess and self.is_post_processed(post_id):
-                    print(f"⏭️  Skipping already processed: {title[:30]}...")
                     continue
-                
-                # Filter criteria (same as original)
-                if (selftext and 
-                    len(selftext) > 100 and
-                    len(selftext) < 2000 and
-                    score > 5):
-                    
-                    stories.append({
-                        'id': post_id,
-                        'title': title,
-                        'content': selftext,
-                        'score': score,
-                        'subreddit': subreddit_name
-                    })
-                    
-                    print(f"✓ Found story: {title[:50]}... (Score: {score})")
-                    
-                    if len(stories) >= limit:
-                        break
-            
-            print(f"✓ Found {len(stories)} suitable stories")
-            
-            # Be respectful - add small delay
+
+                # Skip NSFW (demonetization risk)
+                if is_nsfw:
+                    continue
+
+                # Must have body text
+                if not selftext:
+                    continue
+
+                word_count = len(selftext.split())
+
+                # Text length filter: 80-350 words (ideal for 45-90 second videos)
+                if word_count < 80 or word_count > 350:
+                    continue
+
+                # Minimum score filter
+                if score < min_score:
+                    continue
+
+                # Engagement ratio: comments per upvote (higher = more drama/discussion)
+                engagement_ratio = num_comments / max(score, 1)
+
+                candidates.append({
+                    'id': post_id,
+                    'title': title,
+                    'content': selftext,
+                    'score': score,
+                    'num_comments': num_comments,
+                    'engagement_ratio': engagement_ratio,
+                    'word_count': word_count,
+                    'subreddit': subreddit_name
+                })
+
+            # Sort by engagement ratio (most discussion per upvote = most dramatic)
+            candidates.sort(key=lambda x: x['engagement_ratio'], reverse=True)
+
+            # Take the top results
+            stories = candidates[:limit]
+
+            for s in stories:
+                print(f"  {s['title'][:50]}... "
+                      f"(Score: {s['score']}, Comments: {s['num_comments']}, "
+                      f"Engagement: {s['engagement_ratio']:.2f}, Words: {s['word_count']})")
+
+            print(f"Selected {len(stories)} stories from {len(candidates)} candidates")
             time.sleep(1)
-            
+
         except requests.exceptions.RequestException as e:
-            print(f"❌ Network error: {e}")
+            print(f"Network error: {e}")
         except json.JSONDecodeError as e:
-            print(f"❌ Failed to parse Reddit response: {e}")
+            print(f"Failed to parse Reddit response: {e}")
         except Exception as e:
-            print(f"❌ Error scraping Reddit: {e}")
-        
+            print(f"Error scraping Reddit: {e}")
+
         return stories
     
     def clean_text_for_speech(self, text: str) -> str:
-        """Clean text for TTS"""
+        """Clean text for TTS - remove characters that get read aloud"""
+        # Remove URLs
         text = re.sub(r'http[s]?://\S+', '', text)
+        # Remove Reddit markdown (bold, italic, strikethrough, superscript)
         text = re.sub(r'\*\*(.*?)\*\*', r'\1', text)
         text = re.sub(r'\*(.*?)\*', r'\1', text)
+        text = re.sub(r'~~(.*?)~~', r'\1', text)
+        text = re.sub(r'\^(\S+)', r'\1', text)
+        # Remove Reddit quotes and HTML entities
         text = re.sub(r'&gt;', '', text)
-        text = re.sub(r'\n+', '. ', text)
+        text = re.sub(r'&amp;', 'and', text)
+        text = re.sub(r'&lt;', '', text)
+        text = re.sub(r'&nbsp;', ' ', text)
+        # Remove characters TTS reads aloud
+        text = re.sub(r'[#~^/\\|@<>{}\[\]()_=+]', '', text)
+        # Remove standalone special chars and leftover markdown
+        text = re.sub(r'(?<!\w)[-](?!\w)', '', text)  # Lone dashes but not hyphens in words
+        # Replace newlines with spaces (not periods - TTS says "period")
+        text = re.sub(r'\n+', ' ', text)
+        # Clean up multiple periods/dots
+        text = re.sub(r'\.{2,}', '.', text)
+        # Remove multiple punctuation in a row
+        text = re.sub(r'([.!?,;:])\s*\1+', r'\1', text)
+        # Collapse whitespace
         text = re.sub(r'\s+', ' ', text)
         return text.strip()
     
@@ -247,30 +299,34 @@ class DynamicTextVideoGenerator:
         """
         Async function to generate Edge TTS audio and capture WordBoundary events.
 
+        Uses SubMaker for proper subtitle timing and saves audio correctly.
+
         Returns:
             List of word timing dicts with keys: word, start (seconds), duration (seconds)
         """
-        voice = "en-US-JennyNeural"  # This sounds most like TikTok
+        voice = "en-US-JennyNeural"
 
-        communicate = edge_tts.Communicate(text, voice)
+        communicate = edge_tts.Communicate(text, voice, boundary='WordBoundary')
+        submaker = edge_tts.SubMaker()
 
         word_timings = []
-        audio_bytes = b""
-
-        async for chunk in communicate.stream():
-            if chunk["type"] == "audio":
-                audio_bytes += chunk["data"]
-            elif chunk["type"] == "WordBoundary":
-                word_timings.append({
-                    "word": chunk["text"],
-                    "start": chunk["offset"] / 10_000_000,  # 100-ns units to seconds
-                    "duration": chunk["duration"] / 10_000_000,
-                })
 
         with open(output_path, "wb") as f:
-            f.write(audio_bytes)
+            async for chunk in communicate.stream():
+                if chunk["type"] == "audio":
+                    f.write(chunk["data"])
+                elif chunk["type"] == "WordBoundary":
+                    submaker.feed(chunk)
+                    word_timings.append({
+                        "word": chunk["text"],
+                        "start": chunk["offset"] / 10_000_000,
+                        "duration": chunk["duration"] / 10_000_000,
+                    })
 
         print(f"Captured {len(word_timings)} WordBoundary events from Edge TTS")
+        if word_timings:
+            print(f"  First: '{word_timings[0]['word']}' at {word_timings[0]['start']:.3f}s")
+            print(f"  Last: '{word_timings[-1]['word']}' at {word_timings[-1]['start']:.3f}s")
         return word_timings
     
     def select_random_gameplay(self, gameplay_folder: str) -> str:
@@ -525,7 +581,12 @@ def main():
     
     # Generate videos
     try:
-        stories = generator.scrape_reddit_stories(subreddit, num_videos, allow_reprocess=True)
+        stories = generator.scrape_reddit_stories(
+            subreddit, num_videos,
+            allow_reprocess=True,
+            min_score=50,
+            sort="hot"
+        )
         
         if not stories:
             print("\n❌ No suitable stories found!")
