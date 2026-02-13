@@ -1,6 +1,12 @@
 """
-Reddit-Style Header Generation Module
-Creates the post header that looks like a real Reddit post
+Reddit-Style Header Generation Module - PROFESSIONAL GRADE
+YouTube Shorts 2025-2026 Optimized with Advanced Safe Zones
+
+Modern solid styling with:
+  - Soft drop shadow for depth
+  - Dynamic font sizing (no hard truncation)
+  - Accent bar for visual distinction
+  - Off-white background with subtle border
 """
 
 import os
@@ -15,31 +21,121 @@ except ImportError:
     MOVIEPY_VERSION = 1
 
 
-def rounded_rectangle_clip(size: tuple, radius: int, color: tuple, duration: float):
-    """Create a rounded rectangle clip using PIL"""
+def rounded_rectangle_clip(size: tuple, radius: int, color: tuple, duration: float,
+                           border_color: tuple = None, border_width: int = 0,
+                           accent_color: tuple = None, accent_height: int = 0):
+    """
+    Create a rounded rectangle clip using PIL with optional border and accent bar.
+
+    Args:
+        size: (width, height)
+        radius: Corner radius
+        color: RGB tuple for fill
+        duration: Clip duration in seconds
+        border_color: Optional RGB tuple for a subtle border
+        border_width: Border thickness in pixels
+        accent_color: Optional RGB tuple for top accent bar
+        accent_height: Height of accent bar in pixels
+    """
     from PIL import Image, ImageDraw
     import numpy as np
-    
+
     width, height = size
-    
-    # Create image with transparency
+
     img = Image.new('RGBA', (width, height), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
-    
-    # Draw rounded rectangle
+
+    # Draw border as a filled rounded rect first
+    if border_color and border_width > 0:
+        draw.rounded_rectangle(
+            [(0, 0), (width - 1, height - 1)],
+            radius=radius,
+            fill=border_color + (255,)
+        )
+
+    # Draw main fill on top (inset by border width) — fully opaque
+    inset = border_width
     draw.rounded_rectangle(
-        [(0, 0), (width, height)],
-        radius=radius,
-        fill=color + (255,)  # Add alpha channel
+        [(inset, inset), (width - 1 - inset, height - 1 - inset)],
+        radius=max(0, radius - inset),
+        fill=color + (255,)
     )
-    
-    # Convert to numpy array for MoviePy
+
+    # Draw accent bar at the top (drawn directly on the fill)
+    if accent_color and accent_height > 0:
+        draw.rectangle(
+            [(inset, inset), (width - 1 - inset, inset + accent_height)],
+            fill=accent_color + (255,)
+        )
+
     img_array = np.array(img)
-    
-    # Create ImageClip from the array
     clip = ImageClip(img_array).with_duration(duration)
-    
     return clip
+
+
+def create_shadow_clip(size: tuple, radius: int, duration: float,
+                       shadow_color: tuple = (0, 0, 0, 50),
+                       blur_radius: int = 12, offset: tuple = (4, 6)):
+    """
+    Create a soft drop shadow clip.
+
+    Args:
+        size: (width, height) of the element casting the shadow
+        radius: Corner radius matching the element
+        duration: Clip duration
+        shadow_color: RGBA tuple for shadow
+        blur_radius: Gaussian blur radius
+        offset: (x_offset, y_offset) for directional shadow
+    """
+    from PIL import Image, ImageDraw, ImageFilter
+    import numpy as np
+
+    # Create a larger canvas to accommodate the blur spread
+    pad = blur_radius * 3
+    canvas_w = size[0] + pad * 2
+    canvas_h = size[1] + pad * 2
+
+    img = Image.new('RGBA', (canvas_w, canvas_h), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(img)
+
+    # Draw the shadow shape centered in the padded canvas
+    draw.rounded_rectangle(
+        [(pad, pad), (pad + size[0], pad + size[1])],
+        radius=radius,
+        fill=shadow_color
+    )
+
+    # Apply gaussian blur for soft edges
+    img = img.filter(ImageFilter.GaussianBlur(radius=blur_radius))
+
+    img_array = np.array(img)
+    clip = ImageClip(img_array).with_duration(duration)
+    return clip, pad, offset
+
+
+def wrap_text(text: str, font_path: str, font_size: int, max_width: int) -> str:
+    """Wrap text at word boundaries so no word gets split across lines."""
+    from PIL import ImageFont
+    font = ImageFont.truetype(font_path, font_size)
+    words = text.split()
+    lines = []
+    current_line = ""
+
+    for word in words:
+        test_line = f"{current_line} {word}".strip()
+        bbox = font.getbbox(test_line)
+        line_width = bbox[2] - bbox[0]
+        if line_width <= max_width:
+            current_line = test_line
+        else:
+            if current_line:
+                lines.append(current_line)
+            current_line = word
+
+    if current_line:
+        lines.append(current_line)
+
+    return "\n".join(lines)
 
 
 def create_reddit_header(title: str, author: str = "u/BrokenStories",
@@ -49,175 +145,197 @@ def create_reddit_header(title: str, author: str = "u/BrokenStories",
                          video_width: int = 720,
                          video_height: int = 1280):
     """
-    Create Reddit-style post header that looks like a real Reddit post - MATCHES REFERENCE STYLE
-    
-    Args:
-        title: Post title text
-        author: Reddit username (e.g., "u/BrokenStories")
-        subreddit: Subreddit name (e.g., "r/AskReddit")
-        duration: How long to display the header (seconds)
-        logo_path: Path to Reddit logo image
-        video_width: Width of the video
-        video_height: Height of the video
-    
-    Returns:
-        List of clip objects that make up the header
+    Create Reddit-style post header with modern solid styling.
+
+    Features:
+      - Asymmetrical safe zones for YouTube Shorts 2025-2026
+      - Soft drop shadow for depth
+      - Dynamic font sizing (reduces font instead of truncating)
+      - Off-white background with subtle border and accent bar
+      - Strict relative positioning (drift-proof)
     """
-    
+
     clips = []
-    
-    # -------------------------------------------------- LOGO SIZE (defined early for box calculation)
-    logo_size = 160  # Change this to adjust logo size
-    # --------------------------------------------------
-    
-    # Calculate title height to adjust box size dynamically
-    temp_title_clip = TextClip(
-        text=title[:100] + "..." if len(title) > 100 else title,
-        font="fonts/Montserrat-Black.ttf",
-        font_size=38,
-        color="black",
-        size=(video_width - 110, None),  # Proper constraint for measurement
-        method="caption"
+
+    # === SAFE ZONES ===
+    TOP_SAFE_ZONE = 200
+    LEFT_MARGIN = 30
+    RIGHT_UI_BUFFER = 130 if video_width <= 720 else 190
+    LOGO_SIZE = 160
+    BOX_RADIUS = 24
+
+    box_width = video_width - LEFT_MARGIN - RIGHT_UI_BUFFER
+    box_left_edge = LEFT_MARGIN
+    box_top = TOP_SAFE_ZONE
+
+    # Logo position: flush with box left edge and top
+    logo_x = box_left_edge
+    logo_y = box_top
+    logo_center_y = logo_y + LOGO_SIZE // 2  # Imaginary center line
+
+    # Text area is to the RIGHT of the logo (for emojis/channel name)
+    content_x = logo_x + LOGO_SIZE + 15
+
+    # Title spans the full box width with padding on each side
+    title_padding = 40  # Gap between title and box edges
+    title_width = box_width - (title_padding * 2)
+
+    # === DYNAMIC FONT SIZING ===
+    # Uses wrap_text() to guarantee whole words stay together
+    MAX_TITLE_HEIGHT = 100
+    display_title = title
+    title_font_size = 38
+    font_path = "fonts/Montserrat-Black.ttf"
+    # Account for margin (20px each side) when wrapping
+    wrap_width = title_width - 40
+
+    for fs in range(38, 22, -2):
+        wrapped = wrap_text(display_title, font_path, fs, wrap_width)
+        title_clip = TextClip(
+            text=wrapped,
+            font=font_path,
+            font_size=fs,
+            color="#1a1a1b",
+            method="label",
+            margin=(20, 20)
+        )
+        if title_clip.size[1] and title_clip.size[1] <= MAX_TITLE_HEIGHT:
+            title_font_size = fs
+            break
+
+    # Last resort: truncate if still too tall at smallest font
+    if title_clip.size[1] and title_clip.size[1] > MAX_TITLE_HEIGHT:
+        display_title = title[:90] + "..."
+        wrapped = wrap_text(display_title, font_path, 24, wrap_width)
+        title_clip = TextClip(
+            text=wrapped,
+            font=font_path,
+            font_size=24,
+            color="#1a1a1b",
+            method="label",
+            margin=(20, 20)
+        )
+        title_font_size = 24
+
+    title_height = title_clip.size[1] if title_clip.size[1] else 60
+
+    # === BOX DIMENSIONS ===
+    # Layout: logo on left, channel name + emojis + title to the right, engagement row at bottom
+    # The right-side content may extend below the logo, so take the max
+    emoji_height = 50
+    right_side_height = 40 + emoji_height + 10 + title_height  # top offset + emojis + gap + title
+    content_height = max(LOGO_SIZE, right_side_height)
+    engagement_row_height = 40
+    box_height = content_height + 20 + engagement_row_height + 20
+
+    # === DROP SHADOW ===
+    shadow_clip, shadow_pad, shadow_offset = create_shadow_clip(
+        size=(box_width, box_height),
+        radius=BOX_RADIUS,
+        duration=duration,
+        shadow_color=(0, 0, 0, 50),
+        blur_radius=12,
+        offset=(4, 6)
     )
-    title_height = temp_title_clip.size[1] if temp_title_clip.size[1] else 80
-    
-    # ====== BACKGROUND BOX (NARROWER, ADJUSTED TO CONTENT) ======
-    # Calculate box height based on content
-    # Logo section + title height + engagement (40px) + extra padding
-    box_height = logo_size + title_height + 40 + 40  # Added extra padding for multi-line titles
-    box_width = video_width - 60  # Narrower to match reference
-    
+    shadow_x = box_left_edge - shadow_pad + shadow_offset[0]
+    shadow_y = box_top - shadow_pad + shadow_offset[1]
+    shadow_clip = shadow_clip.with_position((shadow_x, shadow_y))
+    clips.append(shadow_clip)
+
+    # === BACKGROUND BOX ===
     header_bg = rounded_rectangle_clip(
         size=(box_width, box_height),
-        radius=50,                 
-        color=(255, 255, 255),  # White background
-        duration=duration
-    ).with_position(('center', 20))
-
+        radius=BOX_RADIUS,
+        color=(254, 255, 255),  # #FEFFFF
+        duration=duration,
+        border_color=(255, 69, 0),  # Reddit orange border
+        border_width=3,
+        accent_color=(255, 69, 0),
+        accent_height=4
+    ).with_position((box_left_edge, box_top))
     clips.append(header_bg)
-    
-    # ====== REDDIT LOGO ======
+
+    # === REDDIT LOGO — 40px from left, 40px from top of box ===
     if os.path.exists(logo_path):
         logo = ImageClip(logo_path)
-        logo = logo.resized((logo_size, logo_size))
-        logo = logo.with_position((40, 30)).with_duration(duration)
+        logo = logo.resized((LOGO_SIZE, LOGO_SIZE))
+        logo = logo.with_position((logo_x, logo_y)).with_duration(duration)
         clips.append(logo)
-        logo_x_end = 40 + logo_size + 15  # Logo X + size + 15px padding
-        print(f"✓ Loaded Reddit logo ({logo_size}x{logo_size}, positioned at 40,30)")
+        print(f"Logo: {LOGO_SIZE}x{LOGO_SIZE} at ({logo_x}, {logo_y})")
     else:
-        print(f"⚠️  Logo not found at {logo_path}, skipping logo")
-        logo_x_end = 50
-    
-    # ====== "Reddit Tales" TEXT (PARALLEL TO LOGO - CENTERED VERTICALLY) ======
-    # -------------------------------------------------- CHANNEL NAME WIDTH
-    channel_name_width_setting = 250  # Width for channel name (increase if name gets cut off)
-    # --------------------------------------------------
-    
-    channel_name_text = "Reddit Tales"
+        print(f"Logo not found: {logo_path}")
+
+    # === EMOJI REACTIONS — just right of logo ===
+    emoji_x = logo_x + LOGO_SIZE - 22
+    emoji_y = logo_y + LOGO_SIZE - emoji_height - 32
+
+    emoji_path = "logo/emijeys.png"
+    if os.path.exists(emoji_path):
+        emoji_strip = ImageClip(emoji_path)
+        emoji_strip = emoji_strip.resized(height=emoji_height)
+        emoji_strip = emoji_strip.with_position((emoji_x, emoji_y)).with_duration(duration)
+        clips.append(emoji_strip)
+
+    # === CHANNEL NAME + VERIFIED — just above the emojis ===
+    channel_name_y = emoji_y - 42
     channel_name = TextClip(
-        text=channel_name_text,
+        text="Reddit Tales",
         font="fonts/Montserrat-Black.ttf",
-        font_size=38,
-        color="black",
-        size=(channel_name_width_setting, None)  # Width ensures full name displays
-    ).with_position((logo_x_end, 55)).with_duration(duration)
+        font_size=24,
+        color="#1a1a1b",
+        size=(250, None),
+        margin=(5, 5)
+    )
+    channel_name_x = emoji_x - 45
+    channel_name = channel_name.with_position((channel_name_x, channel_name_y)).with_duration(duration)
     clips.append(channel_name)
-    
-    # Calculate actual width of the channel name text
-    channel_name_width = channel_name.size[0]  # Get actual rendered width
-    
-    # ====== VERIFIED BADGE (RIGHT OF THE NAME - MORE SPACE) ======
+
+    channel_name_width_actual = channel_name.size[0]
+
     verified_path = "logo/verified.png"
     if os.path.exists(verified_path):
         verified = ImageClip(verified_path)
-        verified = verified.resized((28, 28))
-        verified = verified.with_position((logo_x_end + channel_name_width + 10, 58)).with_duration(duration)
+        verified = verified.resized((22, 22))
+        verified_x = channel_name_x + channel_name_width_actual - 15
+        verified_y = channel_name_y + 4
+        verified = verified.with_position((verified_x, verified_y)).with_duration(duration)
         clips.append(verified)
-        print(f"✓ Loaded verified badge image at x={logo_x_end + channel_name_width + 10}")
-    else:
-        print(f"⚠️  Verified badge not found at {verified_path}")
-    
-    # ====== EMOJI REACTIONS ROW (BELOW NAME AND BADGE) ======
-    # -------------------------------------------------- EMOJI SIZE
-    emoji_height = 50  # Change this to adjust emoji strip height
-    # --------------------------------------------------
-    
-    emoji_images_path = "logo/emijeys.png"
-    if os.path.exists(emoji_images_path):
-        emoji_strip = ImageClip(emoji_images_path)
-        emoji_strip = emoji_strip.resized(height=emoji_height)
-        emoji_strip = emoji_strip.with_position((logo_x_end, 95)).with_duration(duration)
-        clips.append(emoji_strip)
-        print(f"✓ Loaded emoji reactions image (height={emoji_height})")
-    else:
-        print(f"⚠️  Emoji reactions image not found at {emoji_images_path}")
-    
-    # ====== POST TITLE (CENTERED AND FITS WITHIN BOX) ======
-    # Truncate title if too long
-    display_title = title[:100] + "..." if len(title) > 100 else title
-    
-    # -------------------------------------------------- TITLE POSITION & PADDING
-    title_gap_from_emojis = 10  # Gap between emoji row and title (increase for more space)
-    title_y = 30 + logo_size + title_gap_from_emojis  # Logo Y + Logo size + gap
-    # --------------------------------------------------
-    engagement_y = title_y + title_height + 10
-    # Calculate proper text width to fit in box (box_width - padding on both sides)
-    text_width = box_width - 80  # Leave more padding (40px each side)
-    
-    # Calculate center position for the box
-    box_left_edge = (video_width - box_width) // 2
-    
-    # -------------------------------------------------- TEXT HEIGHT (prevents bottom cutoff)
-    text_height = title_height + 20  # Add extra height so letters don't get cut off
-    # --------------------------------------------------
-    
-    title_clip = TextClip(
-        text=display_title,
-        font="fonts/Montserrat-Black.ttf",
-        font_size=38,  # Bold title
-        color="black",
-        size=(text_width, text_height),  # BOTH width and height set (fixes cutoff!)
-        method="caption"
-    ).with_position((box_left_edge + 40, title_y)).with_duration(duration)  # Centered with padding
-    clips.append(title_clip)
-    
-    # ====== ENGAGEMENT METRICS ======
-    # Position at bottom of box with padding
-    engagement_y = title_y + title_height + 10  # Below title with 10px gap (increased from 5px)
-    
+
+    # === POST TITLE — centered in box, BELOW the emojis ===
+    title_y = emoji_y + emoji_height + 2  # Below the emojis, nudged up
+    title_x = box_left_edge + title_padding - 10  # Nudged left, padding keeps it equal on right
+    title_clip = title_clip.with_position((title_x, title_y)).with_duration(duration)
+    # Title added LAST to clips (below) so it's on top of all other layers
+
+    # === ENGAGEMENT METRICS — below the logo/content area ===
+    engagement_y = box_top + content_height + 20
+
     hearts_path = "logo/harts&coments.png"
-    share_path = "logo/share.png"
-    
-    # -------------------------------------------------- HEARTS & COMMENTS POSITION
-    hearts_x = box_left_edge + 40  # Align with title (centered in box)
-    hearts_height = 28  # Height of hearts & comments image
-    # --------------------------------------------------
-    
-    # Load hearts & comments image
+    hearts_x = box_left_edge + 40
+    hearts_height = 28
+
     if os.path.exists(hearts_path):
         hearts = ImageClip(hearts_path)
         hearts = hearts.resized(height=hearts_height)
         hearts = hearts.with_position((hearts_x, engagement_y)).with_duration(duration)
         clips.append(hearts)
-        print(f"✓ Loaded hearts & comments image")
-    else:
-        print(f"⚠️  Hearts & comments image not found at {hearts_path}")
-    
-    # -------------------------------------------------- SHARE BUTTON POSITION
-    share_offset = 100  # Distance from right edge (smaller = more right)
-    share_height = 28   # Height of share button image
-    # --------------------------------------------------
-    
-    # Load share button
+
+    share_path = "logo/share.png"
+    share_offset = 100
+    share_height = 28
+
     if os.path.exists(share_path):
         share = ImageClip(share_path)
         share = share.resized(height=share_height)
-        # Calculate right position
-        share_x = (video_width // 2) + (box_width // 2) - share_offset
+        share_x = box_left_edge + box_width - share_offset
         share = share.with_position((share_x, engagement_y)).with_duration(duration)
         clips.append(share)
-        print(f"✓ Loaded share button image at x={share_x}")
-    else:
-        print(f"⚠️  Share button not found at {share_path}")
-    
+
+    # === TITLE ON TOP — appended last so it renders above everything else ===
+    clips.append(title_clip)
+
+    # === SUMMARY ===
+    print(f"Header: {box_width}x{box_height}px | Font: {title_font_size}px | "
+          f"Shadow: on | Accent: on | Clips: {len(clips)}")
+
     return clips

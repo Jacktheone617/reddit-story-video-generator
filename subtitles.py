@@ -1,10 +1,14 @@
 """
 Subtitle/Caption Generation Module
-Handles word-by-word text display with precise timing
+Handles word-by-word text display with precise timing.
+
+Supports two modes:
+  1. Ground-truth timing via Edge TTS WordBoundary events (preferred)
+  2. Heuristic estimation as fallback (Google TTS or missing metadata)
 """
 
 import random
-from typing import List, Dict
+from typing import List, Dict, Optional
 
 # MoviePy imports
 try:
@@ -13,6 +17,27 @@ try:
 except ImportError:
     from moviepy.editor import TextClip
     MOVIEPY_VERSION = 1
+
+
+def word_timings_to_segments(word_timings: List[Dict]) -> List[Dict]:
+    """
+    Convert Edge TTS WordBoundary events directly to subtitle segments.
+
+    Args:
+        word_timings: List of dicts with keys: word, start (seconds), duration (seconds)
+
+    Returns:
+        List of segment dicts with keys: word, start, end, word_index
+    """
+    segments = []
+    for i, wt in enumerate(word_timings):
+        segments.append({
+            'word': wt['word'],
+            'start': wt['start'],
+            'end': wt['start'] + wt['duration'],
+            'word_index': i
+        })
+    return segments
 
 
 def estimate_word_timings(text: str, duration: float) -> List[Dict]:
@@ -75,18 +100,36 @@ def estimate_word_timings(text: str, duration: float) -> List[Dict]:
     return word_timings
 
 
-def create_word_segments(text: str, duration: float) -> List[Dict]:
-    """Create segments for individual word display"""
-    word_timings = estimate_word_timings(text, duration)
+def create_word_segments(text: str, duration: float,
+                         word_timings: Optional[List[Dict]] = None) -> List[Dict]:
+    """
+    Create segments for individual word display.
+
+    Args:
+        text: The full text (used for estimation fallback)
+        duration: Total audio duration in seconds
+        word_timings: Optional ground-truth timings from Edge TTS WordBoundary events.
+                      If provided, uses exact timestamps instead of estimation.
+    """
+    if word_timings:
+        print("Using ground-truth Edge TTS WordBoundary timings")
+        segments = word_timings_to_segments(word_timings)
+        if segments:
+            first = segments[0]
+            last = segments[-1]
+            print(f"  First word '{first['word']}': {first['start']:.3f}s")
+            print(f"  Last word '{last['word']}': {last['start']:.3f}-{last['end']:.3f}s")
+        return segments
+
+    # Fallback to estimation
+    estimated = estimate_word_timings(text, duration)
     words = text.split()
-    
-    if not word_timings:
+
+    if not estimated:
         return []
-    
+
     segments = []
-    
-    # Create a segment for each individual word
-    for word_idx, timing in enumerate(word_timings):
+    for word_idx, timing in enumerate(estimated):
         if word_idx < len(words):
             segments.append({
                 'word': words[word_idx],
@@ -94,28 +137,30 @@ def create_word_segments(text: str, duration: float) -> List[Dict]:
                 'end': timing['end'],
                 'word_index': word_idx
             })
-    
+
     return segments
 
 
-def create_dynamic_text_clips(text: str, duration: float, video_width: int, 
-                              video_height: int, fps: int) -> List[TextClip]:
+def create_dynamic_text_clips(text: str, duration: float, video_width: int,
+                              video_height: int, fps: int,
+                              word_timings: Optional[List[Dict]] = None) -> List[TextClip]:
     """
     Create one-word-at-a-time text clips with NO clipping or overlap - FRAME-SAFE
-    
+
     Args:
         text: The text to display word-by-word
         duration: Total audio duration
         video_width: Width of the video
         video_height: Height of the video
         fps: Frames per second for the video
-    
+        word_timings: Optional ground-truth timings from Edge TTS WordBoundary events
+
     Returns:
         List of TextClip objects
     """
     print("Creating one-word-at-a-time text display (FRAME-SAFE)...")
 
-    segments = create_word_segments(text, duration)
+    segments = create_word_segments(text, duration, word_timings=word_timings)
     text_clips = []
 
     # 🔥 CRITICAL FIX: Force frame-safe gap to prevent overlap
