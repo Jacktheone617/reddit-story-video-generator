@@ -573,8 +573,6 @@ class DynamicTextVideoGenerator:
         """
         print(f"Creating DYNAMIC video: {os.path.basename(output_path)}")
 
-        HEADER_DURATION = 4.5  # Header shows for this long, then subtitles start
-
         # Load gameplay video
         gameplay = VideoFileClip(gameplay_path)
 
@@ -582,19 +580,16 @@ class DynamicTextVideoGenerator:
         audio = AudioSegment.from_file(audio_path)
         audio_duration = len(audio) / 1000.0
 
-        # Total video = header time + audio narration
-        total_duration = HEADER_DURATION + audio_duration
-
         # Resize gameplay to TikTok format
         gameplay = gameplay.resized((self.video_width, self.video_height))
 
         # Loop gameplay if needed
-        if gameplay.duration < total_duration:
-            loops = int(total_duration / gameplay.duration) + 1
+        if gameplay.duration < audio_duration:
+            loops = int(audio_duration / gameplay.duration) + 1
             gameplay = gameplay.looped(n=loops)
 
-        # Trim to total length
-        gameplay = gameplay.subclipped(0, total_duration)
+        # Trim to audio length
+        gameplay = gameplay.subclipped(0, audio_duration)
 
         # ═══════════════════════════════════════════════════════════════════
         # HEADER — centered on screen, visible for first 4.5 seconds
@@ -605,14 +600,14 @@ class DynamicTextVideoGenerator:
             title=post_title,
             author="u/BrokenStories",
             subreddit=f"r/{subreddit}",
-            duration=HEADER_DURATION,
+            duration=4.5,
             logo_path=logo_path,
             video_width=self.video_width,
             video_height=self.video_height
         )
 
         # ═══════════════════════════════════════════════════════════════════
-        # CAPTIONS — delayed until header disappears
+        # CAPTIONS — start immediately with the audio
         # ═══════════════════════════════════════════════════════════════════
         dynamic_text_clips = create_dynamic_text_clips(
             text=text,
@@ -620,19 +615,13 @@ class DynamicTextVideoGenerator:
             video_width=self.video_width,
             video_height=self.video_height,
             fps=self.fps,
-            word_timings=word_timings,
-            delay=HEADER_DURATION
+            word_timings=word_timings
         )
 
-        # Pad audio with silence so narration starts after the header
-        silence = AudioSegment.silent(duration=int(HEADER_DURATION * 1000))
-        padded_audio = silence + AudioSegment.from_file(audio_path)
-        padded_audio_path = audio_path.replace('.mp3', '_padded.mp3')
-        padded_audio.export(padded_audio_path, format='mp3')
+        # Load and add audio
+        audio_clip = AudioFileClip(audio_path)
 
-        audio_clip = AudioFileClip(padded_audio_path)
-
-        # Composite everything: gameplay + header + delayed captions
+        # Composite everything: gameplay + header + captions
         all_clips = [gameplay] + reddit_header + dynamic_text_clips
         final_video = CompositeVideoClip(all_clips)
         final_video = final_video.with_audio(audio_clip)
@@ -664,13 +653,6 @@ class DynamicTextVideoGenerator:
             clip.close()
         final_video.close()
 
-        # Remove padded audio temp file
-        if os.path.exists(padded_audio_path):
-            try:
-                os.remove(padded_audio_path)
-            except PermissionError:
-                pass
-        
         print(f"✓ DYNAMIC video created: {output_path}")
         print(f"✓ Faststart enabled: INSTANT playback ready")
         return output_path
@@ -745,21 +727,19 @@ class DynamicTextVideoGenerator:
             traceback.print_exc()
             return []
         finally:
-            # Clean up temp audio files with retry logic (Windows file locking)
-            padded_path = audio_path.replace('.mp3', '_padded.mp3')
-            for temp_file in [audio_path, padded_path]:
-                if os.path.exists(temp_file):
-                    for attempt in range(5):
-                        try:
-                            time.sleep(1)
-                            os.remove(temp_file)
-                            print(f"✓ Cleaned up: {os.path.basename(temp_file)}")
-                            break
-                        except PermissionError:
-                            if attempt == 4:
-                                print(f"⚠️  Could not delete temp file: {temp_file}")
-                            else:
-                                time.sleep(2)
+            # Clean up temp audio with retry logic (Windows file locking)
+            if os.path.exists(audio_path):
+                for attempt in range(5):
+                    try:
+                        time.sleep(1)
+                        os.remove(audio_path)
+                        print(f"✓ Cleaned up: {os.path.basename(audio_path)}")
+                        break
+                    except PermissionError:
+                        if attempt == 4:
+                            print(f"⚠️  Could not delete temp file: {audio_path}")
+                        else:
+                            time.sleep(2)
 
 
 def main():
