@@ -1,38 +1,53 @@
-
-python auto_refresh_test.py
-
-python main_webscraper.py
-
-
-
-
-
-
-
-
 # Reddit Story Video Generator
 
-Automatically creates TikTok-style videos from Reddit stories with dynamic text highlighting and TTS narration.
+Automatically creates TikTok/YouTube Shorts-style vertical videos from Reddit stories with word-synced subtitles, Edge TTS narration, and a Reddit-themed header card.
 
 ## Features
 
-- Auto Reddit Scraping - Pulls fresh stories from any subreddit
-- TikTok Voice - Uses Edge TTS "Jenny Neural" voice
-- Mobile Format - Perfect 9:16 vertical videos
-- Dynamic Text - One word at a time, yellow highlighting
-- Background Video - Your gameplay footage as background
-- No Duplicates - Tracks processed stories to avoid reuse
-- Batch Processing - Create multiple videos at once
+- **No API Keys Required** — Scrapes Reddit directly via JSON endpoints (no PRAW/config.py needed)
+- **Word-Synced Subtitles** — Uses Edge TTS WordBoundary events for frame-accurate captions
+- **Reddit-Style Header** — Modern card with logo, channel name, verified badge, engagement icons, drop shadow
+- **Edge TTS Voice** — "Jenny Neural" TikTok-style narration
+- **Smart Story Selection** — Filters by engagement ratio, word count (80-350), NSFW, and minimum score
+- **Duplicate Prevention** — SQLite database tracks processed posts
+- **9:16 Mobile Format** — 720x1280 optimized for YouTube Shorts / TikTok
+- **Batch Processing** — Generate multiple videos at once
 
-## Quick Start
+---
 
-### 1. Clone Repository
+## Setup on a New Machine
+
+### 1. Prerequisites
+
+- **Python 3.10+** — Download from [python.org](https://www.python.org/downloads/)
+  - During install, check "Add Python to PATH"
+- **FFmpeg** — Required by MoviePy for video encoding
+  - Download from [ffmpeg.org](https://ffmpeg.org/download.html) or install via:
+    ```bash
+    # Windows (with winget)
+    winget install FFmpeg
+
+    # Windows (with choco)
+    choco install ffmpeg
+
+    # macOS
+    brew install ffmpeg
+
+    # Linux
+    sudo apt install ffmpeg
+    ```
+  - Make sure `ffmpeg` is on your PATH (run `ffmpeg -version` to check)
+- **Git** — To clone the repo
+
+### 2. Clone the Repository
+
 ```bash
-git clone <your-repo-url>
-cd reddit-video-generator
+git clone https://github.com/YOUR_USERNAME/reddit-story-video-generator.git
+cd reddit-story-video-generator
 ```
 
-### 2. Create Virtual Environment
+### 3. Create a Virtual Environment
+
 ```bash
 # Windows
 python -m venv venv
@@ -43,205 +58,182 @@ python3 -m venv venv
 source venv/bin/activate
 ```
 
-### 3. Install Dependencies
+### 4. Install Dependencies
+
 ```bash
-pip install -r requirements.txt
+pip install -r requirements_webscraper.txt
 ```
 
-### 4. Setup Reddit API
-1. Go to [Reddit Apps](https://www.reddit.com/prefs/apps)
-2. Click "Create App" → "Script"
-3. Name: `Reddit Video Bot`
-4. Description: `Video generator`
-5. Redirect URI: `http://localhost:8000`
-6. Copy your **Client ID** and **Client Secret**
+This installs: requests, beautifulsoup4, gtts, edge-tts, pydub, moviepy, numpy, imageio, imageio-ffmpeg, Pillow.
 
-### 5. Create Configuration File
-Create `config.py`:
-```python
-# Reddit API Credentials
-REDDIT_CLIENT_ID = "your_client_id_here"
-REDDIT_CLIENT_SECRET = "your_client_secret_here"
-REDDIT_USER_AGENT = "VideoBot/1.0 by YourUsername"
+### 5. Add Background Gameplay Videos
+
+Create a `gameplay_videos/` folder (if it doesn't already exist) and put one or more `.mp4` files in it. These are used as the background footage behind the subtitles.
+
+```
+gameplay_videos/
+  ├── minecraft_parkour.mp4
+  ├── subway_surfers.mp4
+  └── any_gameplay.mp4
 ```
 
-### 6. Add Background Video
-- Place your gameplay video as `background.mp4` in the project folder
-- Or modify the `BACKGROUND_VIDEO_PATH` in the script
-- also create  output_videos folder in same directory
-### 7. Run the Generator
-```bash
-python reddit_video_generator.py
+The script picks a random segment from a random video each time.
+
+### 6. Verify Folders Exist
+
+Make sure these folders exist in the project root (create them if not):
+
+```
+output_videos/       <- Generated videos go here
+gameplay_videos/     <- Your background .mp4 files
 ```
 
-## Project Structure
-```
-reddit-video-generator/
-├── reddit_video_generator.py    # Main script
-├── config.py                    # API credentials (you create this)
-├── background.mp4              # Your background video
-├── requirements.txt            # Dependencies
-├── .gitignore                  # Git ignore rules
-├── README.md                   # This guide
-├── output_videos/              # Generated videos (auto-created)
-├── temp_audio/                 # Temporary audio files (auto-created)
-└── processed_posts.db          # Tracks processed posts (auto-created)
-```
+The script will also create `temp_audio/` automatically during processing.
 
-## Usage Examples
+### 7. Check Required Assets
 
-### Generate 3 AITA Videos
-```python
-subreddit = "AmItheAsshole"
-num_videos = 3
+The repo already includes these — just make sure they're present after cloning:
+
+**Fonts** (`fonts/` folder):
+```
+fonts/
+  ├── Montserrat-Black.ttf    <- Used for subtitles and header title
+  └── Montserrat-Bold.ttf     <- Used for header text
 ```
 
-### Popular Subreddits for Stories
-- `AmItheAsshole` - Relationship/moral dilemmas
-- `relationship_advice` - Dating/relationship issues  
-- `tifu` - "Today I F***ed Up" stories
-- `EntitledPeople` - Karen/entitled behavior
-- `MaliciousCompliance` - Revenge stories
-- `ProRevenge` - Epic revenge tales
-- `relationship_advice` - Dating advice
-- `offmychest` - Personal confessions
-
-### Custom Settings
-```python
-# In the script, modify these variables:
-SUBREDDIT = "your_favorite_subreddit"
-NUM_VIDEOS = 5
-MIN_SCORE = 10  # Minimum upvotes
+**Logo Assets** (`logo/` folder):
+```
+logo/
+  ├── Redit logo.png           <- Reddit logo for header
+  ├── emijeys.png              <- Emoji reaction strip
+  ├── harts&coments.png        <- Hearts/comments engagement icons
+  ├── share.png                <- Share button icon
+  └── verified.png             <- Verified badge icon
 ```
 
-## Customization
-
-### Change Voice
-```python
-# In create_tts_audio method, change:
-voice = "en-US-JennyNeural"  # TikTok-style female
-# Or try:
-voice = "en-US-AriaNeural"   # Different female voice
-voice = "en-US-GuyNeural"    # Male voice
-```
-
-### Adjust Text Timing
-```python
-# In estimate_word_timings method:
-base_rate = 2.2  # Increase for faster speech, decrease for slower
-```
-
-### Video Dimensions
-```python
-# Change video size:
-self.video_width = 720   # 1080 for higher quality
-self.video_height = 1280 # 1920 for higher quality
-```
-
-### Text Styling
-```python
-# In create_dynamic_text_clips:
-fontsize=54,        # Text size
-color='yellow',     # Text color (try 'white', 'cyan', 'lime')
-stroke_width=4      # Border thickness
-```
-
-## Database Management
-
-### Check Processed Posts
-The script automatically shows:
-```
-Database contains 15 processed posts
-Recent processed posts:
-  1. AITA for telling my sister she's wrong...
-  2. AITA for refusing to pay for dinner...
-  3. AITA for not inviting my ex to my wedding...
-```
-
-### Clear Database (Allow Reprocessing)
-Uncomment this line in the script:
-```python
-generator.clear_database()  # Uncomment to reprocess old posts
-```
-
-git push origin main
-```
-
-## Troubleshooting
-
-### "No module named 'praw'"
-```bash
-pip install praw
-```
-
-### "Reddit API authentication failed"
-- Double-check your `config.py` credentials
-- Make sure Reddit app is set to "Script" type
-- Verify Client ID and Secret are correct
-
-### "Background video not found"
-- Place `background.mp4` in the project folder
-- Or update `BACKGROUND_VIDEO_PATH` in the script
-
-### Videos are too quiet/loud
-```python
-# Adjust audio volume in create_tts_audio:
-audio_clip = audio_clip.volumex(1.2)  # Increase volume
-```
-
-### Text appears too fast/slow
-```python
-# In estimate_word_timings, adjust:
-base_rate = 2.0  # Slower speech
-base_rate = 2.5  # Faster speech
-```
-
-### Out of memory errors
-- Use shorter background videos (5-10 minutes max)
-- Reduce video resolution in settings
-- Close other applications while processing
-
-## Legal Notes
-
-- Reddit Content: Public posts are generally fair use for commentary
-- Background Videos: Use your own gameplay or royalty-free footage
-- TTS Voice: Edge TTS is free for personal use
-- Copyright: Always respect content creators and Reddit's terms
-
-## Support
-
-Having issues? Common solutions:
-1. **Update dependencies**: `pip install --upgrade -r requirements.txt`
-2. **Clear cache**: Delete `__pycache__` folders
-3. **Reset database**: Uncomment `generator.clear_database()`
-4. **Check logs**: Look for error messages in console output
+If any of these are missing, the header will still render but without those elements.
 
 ---
 
-## Pro Tips for Viral Content
+## Running the Generator
 
-### Story Selection
-- **High engagement**: 100+ upvotes minimum
-- **Recent posts**: Fresh content performs better  
-- **Dramatic titles**: "AITA for ruining my sister's wedding?"
-- **Cliffhangers**: Stories with plot twists
+### Generate Videos (Main Script)
 
-### Video Optimization
-- **9:16 aspect ratio**: Perfect for mobile viewing
-- **Clear audio**: Jenny Neural voice is already optimized
-- **Readable text**: Yellow text with black outline pops
-- **Background**: Subtle gameplay that doesn't distract
+```bash
+python main_webscraper.py
+```
 
-### Engagement Boosters
-- **Ask questions**: "Team bride or team sister?"
-- **Create polls**: Use TikTok's poll feature
-- **Series format**: "Part 1 of 3" keeps viewers coming back
-- **Cliffhangers**: End with "Wait until you hear what happens next..."
+This will:
+1. Scrape stories from the configured subreddit
+2. Filter by engagement, word count, NSFW, and score
+3. Generate Edge TTS audio with word-level timing
+4. Render 720x1280 videos with header + synced subtitles
+5. Save to `output_videos/`
 
-### Content Calendar
-- **Monday**: Fresh AITA posts from weekend drama
-- **Wednesday**: Workplace/school stories  
-- **Friday**: Relationship/dating content
-- **Sunday**: Family drama stories
+### Preview the Header Only
 
-Start creating viral Reddit story videos now!
+```bash
+python test_header.py
+```
+
+Outputs `header_preview.png` so you can check the header layout without rendering a full video.
+
+---
+
+## Configuration
+
+Edit the bottom of `main_webscraper.py` to change these settings:
+
+```python
+subreddit = "AmItheAsshole"    # Which subreddit to scrape
+num_videos = 2                 # How many videos to generate
+```
+
+Inside `scrape_reddit_stories()` call you can also set:
+- `sort="hot"` — Sort mode: `"hot"`, `"top"`, or `"new"`
+- `min_score=50` — Minimum upvotes required
+- Stories are auto-filtered to 80-350 words and sorted by engagement ratio
+
+### Change the TTS Voice
+
+In `_generate_edge_tts_async()`, change the voice:
+```python
+voice = "en-US-JennyNeural"    # Default (TikTok-style female)
+voice = "en-US-AriaNeural"     # Alternative female
+voice = "en-US-GuyNeural"      # Male voice
+```
+
+---
+
+## Project Structure
+
+```
+reddit-story-video-generator/
+├── main_webscraper.py         # Main script (web scraping, no API needed)
+├── main.py                    # Alternative version (uses Reddit API/PRAW)
+├── header.py                  # Reddit-style header card generation
+├── subtitles.py               # Word-by-word subtitle timing and rendering
+├── test_header.py             # Quick header preview (outputs PNG)
+├── requirements_webscraper.txt # Python dependencies
+├── processed_posts.db         # SQLite DB tracking processed posts (auto-created)
+├── fonts/                     # Montserrat font files
+├── logo/                      # Header image assets
+├── gameplay_videos/           # Your background .mp4 files (you provide)
+├── output_videos/             # Generated videos (auto-created)
+└── readme                     # This file
+```
+
+---
+
+## Troubleshooting
+
+### "No module named 'edge_tts'" or similar
+```bash
+pip install -r requirements_webscraper.txt
+```
+
+### "FFmpeg not found" / video encoding fails
+Make sure FFmpeg is installed and on your PATH:
+```bash
+ffmpeg -version
+```
+
+### "No gameplay videos found"
+Put at least one `.mp4` file in the `gameplay_videos/` folder.
+
+### Subtitles are out of sync
+Make sure you have `edge-tts>=6.1.0` installed. The script uses `boundary='WordBoundary'` which requires a recent version.
+
+### Header assets missing
+The header will still work without logo/emoji images — it just won't show those elements. Make sure the `logo/` and `fonts/` folders came through when you cloned.
+
+### Out of memory errors
+- Use shorter background videos (under 10 minutes)
+- Reduce `num_videos` to process fewer at a time
+- Close other applications while processing
+
+### Reddit scraping returns no stories
+- Check your internet connection
+- Try a different subreddit
+- Reddit may rate-limit requests — wait a minute and try again
+
+---
+
+## Popular Subreddits for Stories
+
+- `AmItheAsshole` — Moral dilemmas
+- `tifu` — "Today I F***ed Up"
+- `EntitledPeople` — Karen stories
+- `MaliciousCompliance` — Revenge stories
+- `ProRevenge` — Epic revenge tales
+- `offmychest` — Personal confessions
+- `relationship_advice` — Dating/relationship issues
+
+---
+
+## Legal Notes
+
+- **Reddit Content**: Public posts used for commentary
+- **Background Videos**: Use your own gameplay or royalty-free footage
+- **Edge TTS**: Free for personal use
+- **Fonts**: Montserrat is licensed under OFL (Open Font License)

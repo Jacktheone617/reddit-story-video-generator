@@ -166,6 +166,7 @@ class DynamicTextVideoGenerator:
                 score = post.get('score', 0)
                 num_comments = post.get('num_comments', 0)
                 is_nsfw = post.get('over_18', False)
+                author = post.get('author', '')
 
                 # Skip already processed
                 if not allow_reprocess and self.is_post_processed(post_id):
@@ -177,6 +178,12 @@ class DynamicTextVideoGenerator:
 
                 # Must have body text
                 if not selftext:
+                    continue
+
+                # Skip update posts — they'll get merged into their original story
+                title_lower = title.lower()
+                if any(kw in title_lower for kw in ['update:', '[update]', 'update -', 'update!', 'follow up:', 'follow-up:']):
+                    print(f"  Skipping update post (will merge with original): {title[:50]}...")
                     continue
 
                 word_count = len(selftext.split())
@@ -196,6 +203,7 @@ class DynamicTextVideoGenerator:
                     'id': post_id,
                     'title': title,
                     'content': selftext,
+                    'author': author,
                     'score': score,
                     'num_comments': num_comments,
                     'engagement_ratio': engagement_ratio,
@@ -226,6 +234,104 @@ class DynamicTextVideoGenerator:
 
         return stories
     
+    def find_update_posts(self, story: Dict) -> List[Dict]:
+        """
+        Search for update posts related to a story.
+
+        Checks the author's recent submissions for posts in the same subreddit
+        that look like updates (title contains 'update', references original post).
+
+        Returns:
+            List of update post dicts sorted by oldest first, each with 'title' and 'content'.
+        """
+        try:
+            author = story.get('author', '')
+
+            if not author or author == '[deleted]':
+                return []
+
+            print(f"  Checking u/{author} for update posts...")
+
+            # Fetch author's recent submissions
+            time.sleep(1)  # Rate limiting
+            user_url = f"https://www.reddit.com/user/{author}/submitted.json"
+            user_posts = self._fetch_reddit_json(user_url, {
+                'raw_json': 1,
+                'limit': 25,
+                'sort': 'new'
+            })
+
+            updates = []
+            original_title_lower = story['title'].lower()
+            # Extract key words from original title for matching
+            # Remove common prefixes like "AITA", "WIBTA", "TIFU", etc.
+            title_keywords = set(
+                w.lower() for w in re.sub(r'[^a-zA-Z\s]', '', story['title']).split()
+                if len(w) > 3 and w.lower() not in {
+                    'aita', 'wibta', 'tifu', 'that', 'this', 'with', 'from',
+                    'have', 'what', 'when', 'where', 'which', 'there', 'their',
+                    'they', 'them', 'then', 'than', 'would', 'could', 'should',
+                    'about', 'after', 'before', 'being', 'between', 'does',
+                    'doing', 'during', 'each', 'because', 'update', 'edit',
+                }
+            )
+
+            for post_data in user_posts:
+                post = post_data['data']
+                post_id = post.get('id', '')
+                post_title = post.get('title', '')
+                post_body = post.get('selftext', '')
+                post_sub = post.get('subreddit', '')
+
+                # Skip the original post itself
+                if post_id == story['id']:
+                    continue
+
+                # Must be in the same subreddit
+                if post_sub.lower() != story['subreddit'].lower():
+                    continue
+
+                # Must have body text
+                if not post_body:
+                    continue
+
+                post_title_lower = post_title.lower()
+
+                # Check if this looks like an update
+                is_update = False
+
+                # Method 1: Title contains "update" keyword
+                if any(kw in post_title_lower for kw in ['update', 'edit:', 'follow up', 'follow-up', 'part 2', 'part two', 'pt 2', 'pt. 2']):
+                    # Check if title shares enough keywords with original
+                    post_keywords = set(
+                        w.lower() for w in re.sub(r'[^a-zA-Z\s]', '', post_title).split()
+                        if len(w) > 3
+                    )
+                    shared = title_keywords & post_keywords
+                    if len(shared) >= 2 or len(title_keywords) <= 3:
+                        is_update = True
+
+                if is_update:
+                    updates.append({
+                        'id': post_id,
+                        'title': post_title,
+                        'content': post_body,
+                        'created': post.get('created_utc', 0),
+                    })
+                    print(f"  Found update: {post_title[:60]}...")
+
+            # Sort updates by creation time (oldest first so story flows naturally)
+            updates.sort(key=lambda x: x['created'])
+
+            if not updates:
+                print(f"  No updates found for this story")
+
+            return updates
+
+        except Exception as e:
+            print(f"  Could not check for updates: {e}")
+            return []
+
     def clean_text_for_speech(self, text: str) -> str:
         """Clean text for TTS - remove characters that get read aloud"""
         # Remove URLs
@@ -457,20 +563,35 @@ class DynamicTextVideoGenerator:
         print(f"✓ Faststart enabled: INSTANT playback ready")
         return output_path
     
-    def generate_videos_from_story(self, story: Dict, gameplay_folder: str, 
+    def generate_videos_from_story(self, story: Dict, gameplay_folder: str,
                                  output_folder: str, logo_path: str = "logo/Redit logo.png") -> List[str]:
-        """Generate dynamic video(s) from a Reddit story"""
+        """Generate dynamic video(s) from a Reddit story, including any updates"""
         print(f"\nProcessing: {story['title'][:50]}...")
-        
-        # Prepare text
+
+        # Check for update posts by the same author
+        updates = self.find_update_posts(story)
+
+        # Build full text: original story + any updates
         full_text = f"{story['title']}. {story['content']}"
+
+        if updates:
+            print(f"  Including {len(updates)} update(s) in video")
+            for update in updates:
+                # Add a separator and the update text
+                full_text += f" Update. {update['content']}"
+                # Mark update posts as processed too so they don't get their own video
+                try:
+                    self.mark_post_processed(update['id'], update['title'], 0)
+                except Exception:
+                    pass  # Already in database
+
         clean_text = self.clean_text_for_speech(full_text)
-        
+
         # Limit text length for optimal processing
         words = clean_text.split()
-        if len(words) > 250:  # ~100 seconds max
-            clean_text = ' '.join(words[:250]) + "..."
-        
+        if len(words) > 500:  # Allow longer for stories with updates (~200 seconds)
+            clean_text = ' '.join(words[:500]) + "..."
+
         print(f"Text length: {len(clean_text)} characters, {len(clean_text.split())} words")
         
         # File names
@@ -583,7 +704,7 @@ def main():
     try:
         stories = generator.scrape_reddit_stories(
             subreddit, num_videos,
-            allow_reprocess=True,
+            allow_reprocess=False,
             min_score=50,
             sort="hot"
         )
