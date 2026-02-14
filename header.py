@@ -158,13 +158,12 @@ def create_reddit_header(title: str, author: str = "u/BrokenStories",
     clips = []
 
     # === LAYOUT CONSTANTS ===
-    LEFT_MARGIN = 30
-    RIGHT_UI_BUFFER = 130 if video_width <= 720 else 190
+    SIDE_PADDING = 40
     LOGO_SIZE = 160
     BOX_RADIUS = 24
 
-    box_width = video_width - LEFT_MARGIN - RIGHT_UI_BUFFER
-    box_left_edge = LEFT_MARGIN
+    box_width = video_width - (SIDE_PADDING * 2)
+    box_left_edge = (video_width - box_width) // 2  # Horizontally centered
 
     # Title spans the full box width with padding on each side
     title_padding = 40  # Gap between title and box edges
@@ -244,9 +243,7 @@ def create_reddit_header(title: str, author: str = "u/BrokenStories",
         color=(254, 255, 255),  # #FEFFFF
         duration=duration,
         border_color=(255, 69, 0),  # Reddit orange border
-        border_width=3,
-        accent_color=(255, 69, 0),
-        accent_height=4
+        border_width=3
     ).with_position((box_left_edge, box_top))
     clips.append(header_bg)
 

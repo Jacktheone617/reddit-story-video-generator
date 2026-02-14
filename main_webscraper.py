@@ -174,7 +174,7 @@ class DynamicTextVideoGenerator:
         try:
             url = f"https://www.reddit.com/r/{subreddit_name}/{sort}.json"
             params = {
-                'limit': limit * 5,  # Fetch extra for filtering
+                'limit': min(limit * 10, 100),  # Fetch plenty for filtering
                 'raw_json': 1,
             }
             if sort == "top":
@@ -213,8 +213,8 @@ class DynamicTextVideoGenerator:
 
                 word_count = len(selftext.split())
 
-                # Text length filter: 80-350 words (ideal for 45-90 second videos)
-                if word_count < 80 or word_count > 350:
+                # Text length filter: 80-600 words (longer stories get trimmed in video)
+                if word_count < 80 or word_count > 600:
                     continue
 
                 # Minimum score filter
@@ -624,9 +624,13 @@ class DynamicTextVideoGenerator:
             delay=HEADER_DURATION
         )
 
-        # Audio starts after the header (delayed by HEADER_DURATION)
-        audio_clip = AudioFileClip(audio_path)
-        audio_clip = audio_clip.with_start(HEADER_DURATION)
+        # Pad audio with silence so narration starts after the header
+        silence = AudioSegment.silent(duration=int(HEADER_DURATION * 1000))
+        padded_audio = silence + AudioSegment.from_file(audio_path)
+        padded_audio_path = audio_path.replace('.mp3', '_padded.mp3')
+        padded_audio.export(padded_audio_path, format='mp3')
+
+        audio_clip = AudioFileClip(padded_audio_path)
 
         # Composite everything: gameplay + header + delayed captions
         all_clips = [gameplay] + reddit_header + dynamic_text_clips
@@ -659,6 +663,13 @@ class DynamicTextVideoGenerator:
         for clip in dynamic_text_clips:
             clip.close()
         final_video.close()
+
+        # Remove padded audio temp file
+        if os.path.exists(padded_audio_path):
+            try:
+                os.remove(padded_audio_path)
+            except PermissionError:
+                pass
         
         print(f"✓ DYNAMIC video created: {output_path}")
         print(f"✓ Faststart enabled: INSTANT playback ready")
