@@ -745,19 +745,21 @@ class DynamicTextVideoGenerator:
             traceback.print_exc()
             return []
         finally:
-            # Clean up temp audio with retry logic (Windows file locking issue)
-            if os.path.exists(audio_path):
-                import time
-                for attempt in range(3):
-                    try:
-                        time.sleep(0.5)  # Brief delay to let file handles close
-                        os.remove(audio_path)
-                        break
-                    except PermissionError:
-                        if attempt == 2:  # Last attempt
-                            print(f"⚠️  Could not delete temp audio file: {audio_path}")
-                        else:
-                            time.sleep(1)  # Wait longer before retry
+            # Clean up temp audio files with retry logic (Windows file locking)
+            padded_path = audio_path.replace('.mp3', '_padded.mp3')
+            for temp_file in [audio_path, padded_path]:
+                if os.path.exists(temp_file):
+                    for attempt in range(5):
+                        try:
+                            time.sleep(1)
+                            os.remove(temp_file)
+                            print(f"✓ Cleaned up: {os.path.basename(temp_file)}")
+                            break
+                        except PermissionError:
+                            if attempt == 4:
+                                print(f"⚠️  Could not delete temp file: {temp_file}")
+                            else:
+                                time.sleep(2)
 
 
 def main():
