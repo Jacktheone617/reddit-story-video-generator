@@ -803,7 +803,7 @@ def main():
     
     # Configuration
     subreddit = "AmItheAsshole"
-    num_videos = 2  # Start with 2 for testing
+    num_videos = 4
     
     print(f"\n🎬 Generating {num_videos} DYNAMIC videos from r/{subreddit}")
     print("=" * 60)
