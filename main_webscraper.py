@@ -39,6 +39,8 @@ except ImportError:
 
 import edge_tts
 import asyncio
+import language_tool_python
+from spellchecker import SpellChecker
 
 # ═══════════════════════════════════════════════════════════════════════════
 # ✅ CRITICAL FIX #1: Import from header.py (replace header.py with header_FIXED.py)
@@ -63,7 +65,30 @@ class DynamicTextVideoGenerator:
         })
         
         self.init_database()
-        
+
+        # Spell checker (pyspellchecker — fast, offline, good at picking the right word)
+        print("Loading spell/grammar checker...")
+        self.spell = SpellChecker()
+        # Reddit-specific words that should NOT be corrected
+        self.ignore_words = {
+            'aita', 'wibta', 'yta', 'nta', 'esh', 'nah', 'yikes',
+            'tifu', 'tldr', 'tl', 'dr', 'imo', 'imho', 'afaik',
+            'irl', 'tbh', 'smh', 'fml', 'omg', 'lol', 'lmao',
+            'bf', 'gf', 'mil', 'fil', 'sil', 'bil', 'dh', 'dw',
+            'hubby', 'wifey', 'kiddo', 'kiddos', 'stepdad', 'stepmom',
+            'reddit', 'subreddit', 'redditor', 'redditors',
+            'gonna', 'wanna', 'gotta', 'kinda', 'sorta', 'dunno',
+            'ok', 'okay', 'nope', 'yep', 'yeah', 'nah', 'meh',
+            'btw', 'fyi', 'brb', 'irl', 'dm', 'dms', 'pm', 'pms',
+            'tho', 'thru', 'ur', 'pls', 'plz', 'cuz', 'coz',
+        }
+        # Add Reddit terms to spellchecker so it doesn't flag them
+        self.spell.word_frequency.load_words(self.ignore_words)
+
+        # Grammar checker (LanguageTool — handles grammar rules, not just spelling)
+        self.lang_tool = language_tool_python.LanguageTool('en-US')
+        print("Spell/grammar checker ready")
+
         # TikTok video settings (9:16 aspect ratio) - OPTIMIZED FOR YOUTUBE SHORTS 2025-2026
         self.video_width = 720   # Optimized for mobile
         self.video_height = 1280 # 9:16 aspect ratio
@@ -359,7 +384,78 @@ class DynamicTextVideoGenerator:
         # Collapse whitespace
         text = re.sub(r'\s+', ' ', text)
         return text.strip()
-    
+
+    def correct_text(self, text: str) -> str:
+        """
+        Fix spelling and grammar using LanguageTool + pyspellchecker.
+
+        LanguageTool detects all issues (spelling + grammar).
+        For spelling errors, pyspellchecker picks a better replacement.
+        Style rules that rewrite the author's phrasing are skipped.
+
+        Runs after clean_text_for_speech() so markdown/special chars are already gone.
+        """
+        matches = self.lang_tool.check(text)
+
+        # Rules that rewrite style rather than fix errors — skip these
+        skip_rules = {
+            'EXTREME_ADJECTIVES', 'TOO_LONG_SENTENCE', 'PASSIVE_VOICE',
+            'READABILITY_RULE_SIMPLE', 'EN_QUOTES', 'DASH_RULE',
+            'COMMA_COMPOUND_SENTENCE', 'WHITESPACE_RULE',
+        }
+
+        fixes = []
+        for match in matches:
+            if match.rule_id in skip_rules:
+                continue
+            bad_text = text[match.offset:match.offset + match.error_length]
+            # Skip if it's a Reddit term we want to keep
+            if bad_text.lower().strip() in self.ignore_words:
+                continue
+            if not match.replacements:
+                continue
+
+            # For spelling errors, use pyspellchecker's suggestion if available
+            # (it picks contextually better words than LanguageTool's alphabetical list)
+            if match.rule_id == 'MORFOLOGIK_RULE_EN_US':
+                stripped = re.sub(r'[^a-zA-Z]', '', bad_text).lower()
+                spell_suggestion = self.spell.correction(stripped)
+                if spell_suggestion and spell_suggestion != stripped:
+                    # Preserve original casing
+                    if bad_text[0].isupper():
+                        spell_suggestion = spell_suggestion.capitalize()
+                    if bad_text.isupper():
+                        spell_suggestion = spell_suggestion.upper()
+                    replacement = spell_suggestion
+                else:
+                    replacement = match.replacements[0]
+            else:
+                replacement = match.replacements[0]
+
+            fixes.append({
+                'offset': match.offset,
+                'length': match.error_length,
+                'original': bad_text,
+                'replacement': replacement,
+                'rule': match.rule_id,
+            })
+
+        if not fixes:
+            print("Spell/grammar check: no corrections needed")
+            return text
+
+        # Apply fixes from end to start so offsets stay valid
+        corrected = text
+        for fix in reversed(fixes):
+            start = fix['offset']
+            end = start + fix['length']
+            corrected = corrected[:start] + fix['replacement'] + corrected[end:]
+            label = "Spelling" if fix['rule'] == 'MORFOLOGIK_RULE_EN_US' else "Grammar"
+            print(f"  {label}: '{fix['original']}' -> '{fix['replacement']}'")
+
+        print(f"Spell/grammar check: applied {len(fixes)} correction(s)")
+        return corrected
+
     def generate_audio(self, text: str, output_path: str, voice_type: str = "tiktok"):
         """
         Generate TTS audio with different voice options.
@@ -586,6 +682,9 @@ class DynamicTextVideoGenerator:
                     pass  # Already in database
 
         clean_text = self.clean_text_for_speech(full_text)
+
+        # Fix spelling and grammar before TTS reads it
+        clean_text = self.correct_text(clean_text)
 
         # Limit text length for optimal processing
         words = clean_text.split()

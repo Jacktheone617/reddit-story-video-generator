@@ -326,6 +326,7 @@ class TestUpdateMerging(unittest.TestCase):
         }]
 
         with patch.object(self.gen, 'find_update_posts', return_value=fake_updates), \
+             patch.object(self.gen, 'correct_text', side_effect=lambda t: t), \
              patch.object(self.gen, 'generate_audio') as mock_audio, \
              patch.object(self.gen, 'select_random_gameplay', return_value="fake.mp4"), \
              patch.object(self.gen, 'create_dynamic_video', return_value="output.mp4"):
@@ -359,6 +360,7 @@ class TestUpdateMerging(unittest.TestCase):
         }]
 
         with patch.object(self.gen, 'find_update_posts', return_value=fake_updates), \
+             patch.object(self.gen, 'correct_text', side_effect=lambda t: t), \
              patch.object(self.gen, 'generate_audio', return_value=(5.0, [])), \
              patch.object(self.gen, 'select_random_gameplay', return_value="fake.mp4"), \
              patch.object(self.gen, 'create_dynamic_video', return_value="output.mp4"):
@@ -380,6 +382,7 @@ class TestUpdateMerging(unittest.TestCase):
         }
 
         with patch.object(self.gen, 'find_update_posts', return_value=[]), \
+             patch.object(self.gen, 'correct_text', side_effect=lambda t: t), \
              patch.object(self.gen, 'generate_audio') as mock_audio, \
              patch.object(self.gen, 'select_random_gameplay', return_value="fake.mp4"), \
              patch.object(self.gen, 'create_dynamic_video', return_value="output.mp4"):
@@ -464,6 +467,79 @@ class TestNSFWAndFilters(unittest.TestCase):
             stories = self.gen.scrape_reddit_stories("test", limit=5, min_score=1)
 
         self.assertEqual(len(stories), 0, "Posts with no body should be skipped")
+
+
+class TestSpellGrammar(unittest.TestCase):
+    """Spell checking and grammar correction."""
+
+    @classmethod
+    def setUpClass(cls):
+        """Create a real generator once for all spell tests (LanguageTool takes time to start)."""
+        cls.gen = DynamicTextVideoGenerator.__new__(DynamicTextVideoGenerator)
+        cls.gen.conn = sqlite3.connect(":memory:")
+        cls.gen.session = MagicMock()
+        cls.gen.user_agents = ["TestAgent/1.0"]
+
+        from spellchecker import SpellChecker
+        import language_tool_python
+        cls.gen.spell = SpellChecker()
+        cls.gen.ignore_words = {
+            'aita', 'wibta', 'yta', 'nta', 'esh', 'nah', 'tifu', 'tldr',
+            'bf', 'gf', 'mil', 'hubby', 'gonna', 'wanna', 'kinda', 'tho',
+            'thru', 'ur', 'pls', 'cuz', 'coz', 'imo', 'imho', 'ok', 'meh',
+        }
+        cls.gen.spell.word_frequency.load_words(cls.gen.ignore_words)
+        cls.gen.lang_tool = language_tool_python.LanguageTool('en-US')
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.gen.lang_tool.close()
+        cls.gen.conn.close()
+
+    def test_fixes_common_misspellings(self):
+        """Common Reddit misspellings should be corrected."""
+        text = "I was realy angery becuase of this."
+        result = self.gen.correct_text(text)
+        self.assertIn("really", result, "Should fix 'realy' -> 'really'")
+        self.assertIn("angry", result, "Should fix 'angery' -> 'angry'")
+        self.assertIn("because", result, "Should fix 'becuase' -> 'because'")
+
+    def test_preserves_reddit_slang(self):
+        """Reddit acronyms and slang should NOT be corrected."""
+        text = "AITA for telling my bf NTA when she said ESH. I gonna kinda ignore it tho."
+        result = self.gen.correct_text(text)
+        result_lower = result.lower()
+        self.assertIn("aita", result_lower, "Should preserve AITA")
+        self.assertIn("bf", result_lower, "Should preserve bf")
+        self.assertIn("nta", result_lower, "Should preserve NTA")
+        self.assertIn("esh", result_lower, "Should preserve ESH")
+        self.assertIn("gonna", result_lower, "Should preserve gonna")
+        self.assertIn("kinda", result_lower, "Should preserve kinda")
+        self.assertIn("tho", result_lower, "Should preserve tho")
+
+    def test_fixes_grammar_cant(self):
+        """Common grammar issues like 'cant' -> 'can't' should be fixed."""
+        text = "She cant come to the party."
+        result = self.gen.correct_text(text)
+        self.assertIn("can't", result, "Should fix 'cant' -> 'can't'")
+
+    def test_clean_text_unchanged(self):
+        """Already correct text should pass through unchanged."""
+        text = "This is a perfectly written sentence with no errors."
+        result = self.gen.correct_text(text)
+        self.assertEqual(text, result, "Clean text should not be modified")
+
+    def test_preserves_capitalization(self):
+        """Corrections should preserve the original casing pattern."""
+        text = "She was Realy upset about it."
+        result = self.gen.correct_text(text)
+        # Should be "Really" (capital R preserved)
+        self.assertIn("Really", result, "Should preserve capitalization on corrections")
+
+    def test_handles_empty_text(self):
+        """Empty string should not crash."""
+        result = self.gen.correct_text("")
+        self.assertEqual("", result)
 
 
 if __name__ == "__main__":
