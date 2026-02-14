@@ -572,44 +572,47 @@ class DynamicTextVideoGenerator:
         - Frame-safe caption timing
         """
         print(f"Creating DYNAMIC video: {os.path.basename(output_path)}")
-        
+
+        HEADER_DURATION = 4.5  # Header shows for this long, then subtitles start
+
         # Load gameplay video
         gameplay = VideoFileClip(gameplay_path)
-        
+
         # Get audio duration
         audio = AudioSegment.from_file(audio_path)
         audio_duration = len(audio) / 1000.0
-        
+
+        # Total video = header time + audio narration
+        total_duration = HEADER_DURATION + audio_duration
+
         # Resize gameplay to TikTok format
-        # In MoviePy 2.x, resized() takes (width, height) tuple directly
         gameplay = gameplay.resized((self.video_width, self.video_height))
-        
+
         # Loop gameplay if needed
-        if gameplay.duration < audio_duration:
-            loops = int(audio_duration / gameplay.duration) + 1
+        if gameplay.duration < total_duration:
+            loops = int(total_duration / gameplay.duration) + 1
             gameplay = gameplay.looped(n=loops)
-        
-        # Trim to audio length
-        gameplay = gameplay.subclipped(0, audio_duration)
-        
+
+        # Trim to total length
+        gameplay = gameplay.subclipped(0, total_duration)
+
         # ═══════════════════════════════════════════════════════════════════
-        # ✅ HEADER CREATION - Uses fixed header.py with safe zone positioning
+        # HEADER — centered on screen, visible for first 4.5 seconds
         # ═══════════════════════════════════════════════════════════════════
-        post_title = text.split('.')[0][:120]  # Truncate to 120 chars for header
-        
+        post_title = text.split('.')[0][:120]
+
         reddit_header = create_reddit_header(
             title=post_title,
             author="u/BrokenStories",
             subreddit=f"r/{subreddit}",
-            duration=4.5,  # Header disappears after 4.5 seconds
+            duration=HEADER_DURATION,
             logo_path=logo_path,
             video_width=self.video_width,
             video_height=self.video_height
         )
-        # Header will be positioned at y=200+ (safe zone) when using header_FIXED.py
-        
+
         # ═══════════════════════════════════════════════════════════════════
-        # ✅ CAPTION CREATION - Frame-safe word-by-word timing
+        # CAPTIONS — delayed until header disappears
         # ═══════════════════════════════════════════════════════════════════
         dynamic_text_clips = create_dynamic_text_clips(
             text=text,
@@ -617,16 +620,18 @@ class DynamicTextVideoGenerator:
             video_width=self.video_width,
             video_height=self.video_height,
             fps=self.fps,
-            word_timings=word_timings
+            word_timings=word_timings,
+            delay=HEADER_DURATION
         )
-        
-        # Load and add audio
+
+        # Audio starts after the header (delayed by HEADER_DURATION)
         audio_clip = AudioFileClip(audio_path)
-        gameplay = gameplay.with_audio(audio_clip)
-        
-        # Composite everything: gameplay + Reddit header + word-by-word captions
+        audio_clip = audio_clip.with_start(HEADER_DURATION)
+
+        # Composite everything: gameplay + header + delayed captions
         all_clips = [gameplay] + reddit_header + dynamic_text_clips
         final_video = CompositeVideoClip(all_clips)
+        final_video = final_video.with_audio(audio_clip)
         
         # ═══════════════════════════════════════════════════════════════════
         # ✅ CRITICAL FIX #2: FASTSTART OPTIMIZATION (Line 344)

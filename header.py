@@ -157,8 +157,7 @@ def create_reddit_header(title: str, author: str = "u/BrokenStories",
 
     clips = []
 
-    # === SAFE ZONES ===
-    TOP_SAFE_ZONE = 200
+    # === LAYOUT CONSTANTS ===
     LEFT_MARGIN = 30
     RIGHT_UI_BUFFER = 130 if video_width <= 720 else 190
     LOGO_SIZE = 160
@@ -166,15 +165,6 @@ def create_reddit_header(title: str, author: str = "u/BrokenStories",
 
     box_width = video_width - LEFT_MARGIN - RIGHT_UI_BUFFER
     box_left_edge = LEFT_MARGIN
-    box_top = TOP_SAFE_ZONE
-
-    # Logo position: flush with box left edge and top
-    logo_x = box_left_edge
-    logo_y = box_top
-    logo_center_y = logo_y + LOGO_SIZE // 2  # Imaginary center line
-
-    # Text area is to the RIGHT of the logo (for emojis/channel name)
-    content_x = logo_x + LOGO_SIZE + 15
 
     # Title spans the full box width with padding on each side
     title_padding = 40  # Gap between title and box edges
@@ -220,13 +210,18 @@ def create_reddit_header(title: str, author: str = "u/BrokenStories",
     title_height = title_clip.size[1] if title_clip.size[1] else 60
 
     # === BOX DIMENSIONS ===
-    # Layout: logo on left, channel name + emojis + title to the right, engagement row at bottom
-    # The right-side content may extend below the logo, so take the max
     emoji_height = 50
-    right_side_height = 40 + emoji_height + 10 + title_height  # top offset + emojis + gap + title
+    right_side_height = 40 + emoji_height + 10 + title_height
     content_height = max(LOGO_SIZE, right_side_height)
     engagement_row_height = 40
     box_height = content_height + 20 + engagement_row_height + 20
+
+    # === VERTICALLY CENTER THE HEADER ===
+    box_top = (video_height - box_height) // 2
+
+    # All Y positions are relative to box_top
+    logo_x = box_left_edge
+    logo_y = box_top
 
     # === DROP SHADOW ===
     shadow_clip, shadow_pad, shadow_offset = create_shadow_clip(
@@ -255,7 +250,7 @@ def create_reddit_header(title: str, author: str = "u/BrokenStories",
     ).with_position((box_left_edge, box_top))
     clips.append(header_bg)
 
-    # === REDDIT LOGO — 40px from left, 40px from top of box ===
+    # === REDDIT LOGO ===
     if os.path.exists(logo_path):
         logo = ImageClip(logo_path)
         logo = logo.resized((LOGO_SIZE, LOGO_SIZE))
@@ -302,10 +297,9 @@ def create_reddit_header(title: str, author: str = "u/BrokenStories",
         clips.append(verified)
 
     # === POST TITLE — centered in box, BELOW the emojis ===
-    title_y = emoji_y + emoji_height + 2  # Below the emojis, nudged up
-    title_x = box_left_edge + title_padding - 10  # Nudged left, padding keeps it equal on right
+    title_y = emoji_y + emoji_height + 2
+    title_x = box_left_edge + title_padding - 10
     title_clip = title_clip.with_position((title_x, title_y)).with_duration(duration)
-    # Title added LAST to clips (below) so it's on top of all other layers
 
     # === ENGAGEMENT METRICS — below the logo/content area ===
     engagement_y = box_top + content_height + 20

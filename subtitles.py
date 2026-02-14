@@ -154,7 +154,8 @@ def create_word_segments(text: str, duration: float,
 
 def create_dynamic_text_clips(text: str, duration: float, video_width: int,
                               video_height: int, fps: int,
-                              word_timings: Optional[List[Dict]] = None) -> List[TextClip]:
+                              word_timings: Optional[List[Dict]] = None,
+                              delay: float = 0.0) -> List[TextClip]:
     """
     Create one-word-at-a-time text clips with NO clipping or overlap - FRAME-SAFE
 
@@ -165,20 +166,27 @@ def create_dynamic_text_clips(text: str, duration: float, video_width: int,
         video_height: Height of the video
         fps: Frames per second for the video
         word_timings: Optional ground-truth timings from Edge TTS WordBoundary events
+        delay: Seconds to wait before showing subtitles (e.g. wait for header to disappear)
 
     Returns:
         List of TextClip objects
     """
     print("Creating one-word-at-a-time text display (FRAME-SAFE)...")
+    if delay > 0:
+        print(f"Subtitle delay: {delay:.1f}s (waiting for header)")
 
     segments = create_word_segments(text, duration, word_timings=word_timings)
     text_clips = []
 
-    # 🔥 CRITICAL FIX: Force frame-safe gap to prevent overlap
+    # CRITICAL FIX: Force frame-safe gap to prevent overlap
     frame_gap = 1 / fps  # one full frame gap (prevents MoviePy frame collision)
     print(f"Frame gap: {frame_gap:.4f}s ({fps}fps)")
 
     for i, segment in enumerate(segments):
+        # Skip segments that start before the delay
+        if segment['start'] + delay < delay:
+            continue
+
         # End word BEFORE next word starts by at least 1 frame (NO OVERLAP POSSIBLE)
         if i < len(segments) - 1:
             extended_duration = segments[i + 1]['start'] - segment['start'] - frame_gap
@@ -200,8 +208,8 @@ def create_dynamic_text_clips(text: str, duration: float, video_width: int,
                 size=(video_width - 80, 150),  # Extra height prevents stroke clipping
                 method="caption"                     # IMPORTANT
             )
-            .with_position(('center', video_height - 380))  # Moved up a bit more
-            .with_start(segment['start'])
+            .with_position(('center', video_height - 380))
+            .with_start(segment['start'] + delay)
             .with_duration(extended_duration)
         )
 
@@ -210,7 +218,7 @@ def create_dynamic_text_clips(text: str, duration: float, video_width: int,
         if i < 5:
             print(
                 f"  Word '{segment['word']}': "
-                f"{segment['start']:.2f} → {segment['start'] + extended_duration:.2f}s "
+                f"{segment['start'] + delay:.2f} → {segment['start'] + delay + extended_duration:.2f}s "
                 f"(dur: {extended_duration:.3f}s)"
             )
 
