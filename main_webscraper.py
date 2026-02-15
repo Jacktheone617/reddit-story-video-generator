@@ -47,6 +47,7 @@ from spellchecker import SpellChecker
 # ═══════════════════════════════════════════════════════════════════════════
 from header import create_reddit_header
 from subtitles import create_dynamic_text_clips
+from youtube_uploader import YouTubeUploader
 
 
 class DynamicTextVideoGenerator:
@@ -71,7 +72,7 @@ class DynamicTextVideoGenerator:
         self.spell = SpellChecker()
         # Reddit-specific words that should NOT be corrected
         self.ignore_words = {
-            'aita', 'wibta', 'yta', 'nta', 'esh', 'nah', 'yikes',
+            'aita', 'aitah', 'wibta', 'yta', 'nta', 'esh', 'nah', 'yikes',
             'tifu', 'tldr', 'tl', 'dr', 'imo', 'imho', 'afaik',
             'irl', 'tbh', 'smh', 'fml', 'omg', 'lol', 'lmao',
             'bf', 'gf', 'mil', 'fil', 'sil', 'bil', 'dh', 'dw',
@@ -104,6 +105,17 @@ class DynamicTextVideoGenerator:
                 title TEXT,
                 processed_date TIMESTAMP,
                 video_parts INTEGER
+            )
+        ''')
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS uploaded_videos (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                post_id TEXT,
+                video_path TEXT,
+                platform TEXT DEFAULT 'youtube',
+                video_id TEXT,
+                privacy TEXT DEFAULT 'private',
+                uploaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         ''')
         self.conn.commit()
@@ -657,6 +669,42 @@ class DynamicTextVideoGenerator:
         print(f"✓ Faststart enabled: INSTANT playback ready")
         return output_path
     
+    def _try_youtube_upload(self, video_path: str, story: Dict):
+        """Upload a video to YouTube as a private Short if credentials exist."""
+        if not os.path.exists("client_secret.json"):
+            print("YouTube upload skipped: no client_secret.json found")
+            return
+
+        try:
+            uploader = YouTubeUploader()
+            uploader.authenticate()
+
+            # Title: story title truncated to 95 chars + #Shorts
+            title = story['title'][:95] + " #Shorts"
+            subreddit = story.get('subreddit', 'AskReddit')
+            author = story.get('author', '')
+            description = (
+                f"r/{subreddit} | u/{author}\n\n"
+                "#Shorts #Reddit #RedditStories #AskReddit"
+            )
+
+            result = uploader.upload_short(video_path, title, description)
+
+            if result:
+                cursor = self.conn.cursor()
+                cursor.execute(
+                    "INSERT INTO uploaded_videos (post_id, video_path, video_id, privacy) "
+                    "VALUES (?, ?, ?, ?)",
+                    (story['id'], video_path, result['video_id'], 'private')
+                )
+                self.conn.commit()
+                print(f"Uploaded to YouTube (private): {result['url']}")
+            else:
+                print("YouTube upload failed, continuing...")
+
+        except Exception as e:
+            print(f"YouTube upload error: {e}")
+
     def generate_videos_from_story(self, story: Dict, gameplay_folder: str,
                                  output_folder: str, logo_path: str = "logo/Redit logo.png") -> List[str]:
         """Generate dynamic video(s) from a Reddit story, including any updates"""
@@ -718,7 +766,10 @@ class DynamicTextVideoGenerator:
                 self.mark_post_processed(story['id'], story['title'], 1)
             except Exception:
                 pass  # Already in database, that's fine
-            
+
+            # Upload to YouTube if credentials are available
+            self._try_youtube_upload(final_video, story)
+
             return [final_video]
             
         except Exception as e:
@@ -783,7 +834,7 @@ def main():
     
     # Configuration
     subreddit = "AmItheAsshole"
-    num_videos = 4
+    num_videos = 1
     
     print(f"\n🎬 Generating {num_videos} DYNAMIC videos from r/{subreddit}")
     print("=" * 60)

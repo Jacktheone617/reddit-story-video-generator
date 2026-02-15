@@ -77,6 +77,10 @@ temp/
 # Reddit API
 praw.ini
 
+# YouTube API credentials
+client_secret.json
+token.json
+
 # Jupyter Notebooks
 .ipynb_checkpoints
 *.ipynb
