@@ -83,6 +83,10 @@ class DynamicTextVideoGenerator:
             'ok', 'okay', 'nope', 'yep', 'yeah', 'nah', 'meh',
             'btw', 'fyi', 'brb', 'irl', 'dm', 'dms', 'pm', 'pms',
             'tho', 'thru', 'ur', 'pls', 'plz', 'cuz', 'coz',
+            'bro', 'bruh', 'dude', 'sus', 'lowkey', 'highkey', 'vibe',
+            'salty', 'toxic', 'ghosted', 'gaslighting', 'gaslight',
+            'cringe', 'wholesome', 'deadass', 'legit', 'hella',
+            'periodt', 'slay', 'bestie', 'bestfriend',
         }
         # Add Reddit terms to spellchecker so it doesn't flag them
         self.spell.word_frequency.load_words(self.ignore_words)
@@ -432,7 +436,12 @@ class DynamicTextVideoGenerator:
             # (it picks contextually better words than LanguageTool's alphabetical list)
             if match.rule_id == 'MORFOLOGIK_RULE_EN_US':
                 stripped = re.sub(r'[^a-zA-Z]', '', bad_text).lower()
-                spell_suggestion = self.spell.correction(stripped)
+                # Collapse elongated words: "broooooo" -> "bro", "nooooo" -> "no"
+                collapsed = re.sub(r'(.)\1{2,}', r'\1', stripped)
+                if collapsed in self.ignore_words:
+                    continue
+                # Try spell-checking the collapsed version first
+                spell_suggestion = self.spell.correction(collapsed) or self.spell.correction(stripped)
                 if spell_suggestion and spell_suggestion != stripped:
                     # Preserve original casing
                     if bad_text[0].isupper():
@@ -499,7 +508,15 @@ class DynamicTextVideoGenerator:
             Tuple of (duration_seconds, word_timings_list_or_None)
         """
         try:
-            word_timings = asyncio.run(self._generate_edge_tts_async(text, output_path))
+            # Use a fresh event loop each time to avoid
+            # "asyncio.run() cannot be called from a running event loop"
+            loop = asyncio.new_event_loop()
+            try:
+                word_timings = loop.run_until_complete(
+                    self._generate_edge_tts_async(text, output_path)
+                )
+            finally:
+                loop.close()
 
             audio = AudioSegment.from_file(output_path)
             duration = len(audio) / 1000.0
@@ -799,7 +816,7 @@ class DynamicTextVideoGenerator:
                 pass  # Already in database, that's fine
 
             # Upload to YouTube if credentials are available
-            self._try_youtube_upload(final_video, story)
+            # self._try_youtube_upload(final_video, story)
 
             # Upload to TikTok if cookies are available
             self._try_tiktok_upload(final_video, story)
@@ -868,7 +885,7 @@ def main():
     
     # Configuration
     subreddit = "AmItheAsshole"
-    num_videos = 1
+    num_videos = 4
     
     print(f"\n🎬 Generating {num_videos} DYNAMIC videos from r/{subreddit}")
     print("=" * 60)
@@ -902,17 +919,22 @@ def main():
         total_videos = 0
         start_time = datetime.now()
         
-        for story in stories:
+        for i, story in enumerate(stories):
             story_start = datetime.now()
             videos = generator.generate_videos_from_story(
                 story, gameplay_folder, output_folder, logo_path=logo_path
             )
             story_end = datetime.now()
             story_duration = (story_end - story_start).total_seconds()
-            
+
             total_videos += len(videos)
             if videos:
                 print(f"✓ Created {len(videos)} video(s) in {story_duration:.1f}s")
+
+            # Wait 3 minutes between videos to avoid rate limits
+            if i < len(stories) - 1:
+                print("Waiting 3 minutes before next video...")
+                time.sleep(180)
         
         end_time = datetime.now()
         total_duration = (end_time - start_time).total_seconds()
