@@ -81,6 +81,10 @@ praw.ini
 client_secret.json
 token.json
 
+# Cookies (contain auth tokens - never commit)
+tiktok_cookies.txt
+cookies.txt
+
 # Jupyter Notebooks
 .ipynb_checkpoints
 *.ipynb

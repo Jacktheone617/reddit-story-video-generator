@@ -48,6 +48,7 @@ from spellchecker import SpellChecker
 from header import create_reddit_header
 from subtitles import create_dynamic_text_clips
 from youtube_uploader import YouTubeUploader
+from tiktok_upload import TikTokVideoUploader
 
 
 class DynamicTextVideoGenerator:
@@ -670,7 +671,7 @@ class DynamicTextVideoGenerator:
         return output_path
     
     def _try_youtube_upload(self, video_path: str, story: Dict):
-        """Upload a video to YouTube as a private Short if credentials exist."""
+        """Upload a video to YouTube as a public Short if credentials exist."""
         if not os.path.exists("client_secret.json"):
             print("YouTube upload skipped: no client_secret.json found")
             return
@@ -688,22 +689,52 @@ class DynamicTextVideoGenerator:
                 "#Shorts #Reddit #RedditStories #AskReddit"
             )
 
-            result = uploader.upload_short(video_path, title, description)
+            result = uploader.upload_short(video_path, title, description, privacy="public")
 
             if result:
                 cursor = self.conn.cursor()
                 cursor.execute(
                     "INSERT INTO uploaded_videos (post_id, video_path, video_id, privacy) "
                     "VALUES (?, ?, ?, ?)",
-                    (story['id'], video_path, result['video_id'], 'private')
+                    (story['id'], video_path, result['video_id'], 'public')
                 )
                 self.conn.commit()
-                print(f"Uploaded to YouTube (private): {result['url']}")
+                print(f"Uploaded to YouTube (public): {result['url']}")
             else:
                 print("YouTube upload failed, continuing...")
 
         except Exception as e:
             print(f"YouTube upload error: {e}")
+
+    def _try_tiktok_upload(self, video_path: str, story: Dict):
+        """Upload a video to TikTok if cookies file exists."""
+        if not os.path.exists("tiktok_cookies.txt"):
+            print("TikTok upload skipped: no tiktok_cookies.txt found")
+            return
+
+        try:
+            uploader = TikTokVideoUploader()
+
+            title = story['title'][:150]
+            subreddit = story.get('subreddit', 'AskReddit')
+            tags = ["Reddit", "RedditStories", subreddit]
+
+            result = uploader.upload_video(video_path, title, tags=tags)
+
+            if result:
+                cursor = self.conn.cursor()
+                cursor.execute(
+                    "INSERT INTO uploaded_videos (post_id, video_path, platform, privacy) "
+                    "VALUES (?, ?, ?, ?)",
+                    (story['id'], video_path, 'tiktok', 'public')
+                )
+                self.conn.commit()
+                print(f"Uploaded to TikTok: {title[:50]}...")
+            else:
+                print("TikTok upload failed, continuing...")
+
+        except Exception as e:
+            print(f"TikTok upload error: {e}")
 
     def generate_videos_from_story(self, story: Dict, gameplay_folder: str,
                                  output_folder: str, logo_path: str = "logo/Redit logo.png") -> List[str]:
@@ -769,6 +800,9 @@ class DynamicTextVideoGenerator:
 
             # Upload to YouTube if credentials are available
             self._try_youtube_upload(final_video, story)
+
+            # Upload to TikTok if cookies are available
+            self._try_tiktok_upload(final_video, story)
 
             return [final_video]
             
