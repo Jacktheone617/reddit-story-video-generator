@@ -23,7 +23,7 @@ from pydub import AudioSegment
 # MoviePy 2.x imports (different from 1.x)
 try:
     # Try MoviePy 2.x import structure first
-    from moviepy import VideoFileClip, CompositeVideoClip, TextClip, AudioFileClip, ImageClip
+    from moviepy import VideoFileClip, CompositeVideoClip, TextClip, AudioFileClip, ImageClip, concatenate_videoclips
     # In MoviePy 2.x, effects are methods on the clip objects, not separate fx module
     MOVIEPY_VERSION = 2
     print("Using MoviePy 2.x")
@@ -39,6 +39,8 @@ except ImportError:
 
 import edge_tts
 import asyncio
+import nest_asyncio
+nest_asyncio.apply()  # Allow nested event loops (fixes Edge TTS after Playwright runs)
 import language_tool_python
 from spellchecker import SpellChecker
 
@@ -49,6 +51,30 @@ from header import create_reddit_header
 from subtitles import create_dynamic_text_clips
 from youtube_uploader import YouTubeUploader
 from tiktok_upload import TikTokVideoUploader
+
+# AI Background Generation (optional - falls back to gameplay if unavailable)
+try:
+    from scene_extractor import extract_scenes, generate_fallback_scenes
+    from image_generator import SceneImageGenerator
+    from scene_animator import create_scene_clips
+    from ai_config import GENERATED_SCENES_DIR, TARGET_SCENES
+    AI_BACKGROUNDS_AVAILABLE = True
+    print("AI background generation modules loaded")
+except ImportError as e:
+    AI_BACKGROUNDS_AVAILABLE = False
+    print(f"AI backgrounds not available ({e}), using gameplay fallback")
+
+
+def _tiktok_upload_worker(video_path, title, tags, cookies_path, result_queue):
+    """Subprocess worker for TikTok uploads (isolates Playwright's event loop)."""
+    try:
+        from tiktok_upload import TikTokVideoUploader
+        uploader = TikTokVideoUploader(cookies_path=cookies_path)
+        result = uploader.upload_video(video_path, title, tags=tags)
+        result_queue.put(result is not None)
+    except Exception as e:
+        print(f"TikTok upload failed: {e}")
+        result_queue.put(False)
 
 
 class DynamicTextVideoGenerator:
@@ -73,20 +99,37 @@ class DynamicTextVideoGenerator:
         self.spell = SpellChecker()
         # Reddit-specific words that should NOT be corrected
         self.ignore_words = {
+            # Reddit voting/judgment terms
             'aita', 'aitah', 'wibta', 'yta', 'nta', 'esh', 'nah', 'yikes',
             'tifu', 'tldr', 'tl', 'dr', 'imo', 'imho', 'afaik',
-            'irl', 'tbh', 'smh', 'fml', 'omg', 'lol', 'lmao',
+            # Common internet abbreviations
+            'irl', 'tbh', 'smh', 'fml', 'omg', 'lol', 'lmao', 'lmk', 'idk',
+            'ngl', 'iirc', 'ftw', 'smth', 'rn', 'asap', 'ty', 'np', 'ikr',
+            'btw', 'fyi', 'brb', 'dm', 'dms', 'pm', 'pms', 'ofc', 'jk',
+            # Relationship terms
             'bf', 'gf', 'mil', 'fil', 'sil', 'bil', 'dh', 'dw',
             'hubby', 'wifey', 'kiddo', 'kiddos', 'stepdad', 'stepmom',
+            # Reddit terms
             'reddit', 'subreddit', 'redditor', 'redditors',
+            # Informal speech
             'gonna', 'wanna', 'gotta', 'kinda', 'sorta', 'dunno',
             'ok', 'okay', 'nope', 'yep', 'yeah', 'nah', 'meh',
-            'btw', 'fyi', 'brb', 'irl', 'dm', 'dms', 'pm', 'pms',
             'tho', 'thru', 'ur', 'pls', 'plz', 'cuz', 'coz',
             'bro', 'bruh', 'dude', 'sus', 'lowkey', 'highkey', 'vibe',
             'salty', 'toxic', 'ghosted', 'gaslighting', 'gaslight',
             'cringe', 'wholesome', 'deadass', 'legit', 'hella',
             'periodt', 'slay', 'bestie', 'bestfriend',
+            # Gaming terms (Minecraft, etc.)
+            'netherite', 'minecraft', 'nether', 'enderman', 'creeper',
+            'endermen', 'respawn', 'speedrun', 'speedrunning', 'pvp',
+            'pve', 'gg', 'afk', 'noob', 'nerf', 'buff', 'op',
+            'xbox', 'playstation', 'nintendo', 'fortnite', 'roblox',
+            # Brand names / apps
+            'venmo', 'paypal', 'zelle', 'cashapp', 'uber', 'lyft',
+            'tiktok', 'snapchat', 'instagram', 'whatsapp', 'spotify',
+            'netflix', 'youtube', 'google', 'facebook', 'airbnb',
+            # Contractions often flagged
+            "y'all", "ya'll",
         }
         # Add Reddit terms to spellchecker so it doesn't flag them
         self.spell.word_frequency.load_words(self.ignore_words)
@@ -187,6 +230,7 @@ class DynamicTextVideoGenerator:
         print(f"Scraping r/{subreddit_name} ({sort})...")
 
         candidates = []
+        stories = []
 
         try:
             url = f"https://www.reddit.com/r/{subreddit_name}/{sort}.json"
@@ -419,17 +463,45 @@ class DynamicTextVideoGenerator:
             'EXTREME_ADJECTIVES', 'TOO_LONG_SENTENCE', 'PASSIVE_VOICE',
             'READABILITY_RULE_SIMPLE', 'EN_QUOTES', 'DASH_RULE',
             'COMMA_COMPOUND_SENTENCE', 'WHITESPACE_RULE',
+            # Transition/style rules that insert "Furthermore," "However," etc.
+            'SENTENCE_FRAGMENT', 'SENTENCE_LINKING',
         }
+        # Rule categories (prefixes) that are style suggestions, not errors
+        skip_categories = {'STYLE', 'REDUNDANCY', 'TYPOGRAPHY'}
 
         fixes = []
         for match in matches:
             if match.rule_id in skip_rules:
+                continue
+            # Skip entire style/redundancy categories
+            if any(match.rule_id.startswith(cat) for cat in skip_categories):
                 continue
             bad_text = text[match.offset:match.offset + match.error_length]
             # Skip if it's a Reddit term we want to keep
             if bad_text.lower().strip() in self.ignore_words:
                 continue
             if not match.replacements:
+                continue
+
+            replacement = match.replacements[0]
+
+            # Guard: skip if the replacement adds transition words
+            # (e.g., "She" → "Furthermore, she", "I" → "However, I")
+            added_text = replacement.lower().replace(bad_text.lower(), '').strip(' ,')
+            transition_words = {'furthermore', 'however', 'moreover', 'therefore',
+                                'additionally', 'nevertheless', 'consequently',
+                                'meanwhile', 'otherwise', 'instead'}
+            if added_text in transition_words:
+                continue
+
+            # Guard: skip single common word → different common word substitutions
+            # (e.g., "if" → "is", "to" → "too") — these change meaning
+            if (match.rule_id != 'MORFOLOGIK_RULE_EN_US'
+                    and len(bad_text.split()) == 1 and len(replacement.split()) == 1
+                    and bad_text.lower() != replacement.lower()
+                    and len(bad_text) <= 4
+                    and self.spell.unknown([bad_text.lower()]) == set()):
+                # The original word is a real word — don't swap it
                 continue
 
             # For spelling errors, use pyspellchecker's suggestion if available
@@ -451,8 +523,10 @@ class DynamicTextVideoGenerator:
                     replacement = spell_suggestion
                 else:
                     replacement = match.replacements[0]
-            else:
-                replacement = match.replacements[0]
+
+            # Final guard: skip duplicate word "fixes" like "to to" → "to"
+            # when they appear in different sentence contexts
+            # (keep legitimate duplicate fixes like actual "to to" typos)
 
             fixes.append({
                 'offset': match.offset,
@@ -562,20 +636,175 @@ class DynamicTextVideoGenerator:
         return word_timings
     
     def select_random_gameplay(self, gameplay_folder: str) -> str:
-        """Select random gameplay video"""
+        """Select random gameplay video (legacy - use build_gameplay_background instead)"""
         if not os.path.exists(gameplay_folder):
             raise FileNotFoundError(f"Gameplay folder not found: {gameplay_folder}")
-            
-        video_files = [f for f in os.listdir(gameplay_folder) 
-                      if f.lower().endswith(('.mp4', '.avi', '.mov', '.mkv', '.webm'))]
-        
+
+        video_files = [f for f in os.listdir(gameplay_folder)
+                       if f.lower().endswith(('.mp4', '.avi', '.mov', '.mkv', '.webm'))]
+
         if not video_files:
             raise FileNotFoundError("No gameplay videos found")
-        
+
         selected = os.path.join(gameplay_folder, random.choice(video_files))
         print(f"✓ Selected: {os.path.basename(selected)}")
         return selected
-    
+
+    def build_gameplay_background(self, gameplay_folder: str, duration: float):
+        """
+        Build a varied background by stitching random segments from DIFFERENT biking videos.
+
+        - Picks a new video for each segment so the background constantly changes.
+        - Each segment is 8-25 seconds from a random position in that video.
+        - Continues until total coverage >= duration, then trims to exact length.
+
+        Returns:
+            A single MoviePy clip (resized to video dimensions) ready to composite.
+        """
+        if not os.path.exists(gameplay_folder):
+            raise FileNotFoundError(f"Gameplay folder not found: {gameplay_folder}")
+
+        video_files = [
+            os.path.join(gameplay_folder, f) for f in os.listdir(gameplay_folder)
+            if f.lower().endswith(('.mp4', '.avi', '.mov', '.mkv', '.webm'))
+        ]
+
+        if not video_files:
+            raise FileNotFoundError("No gameplay videos found in folder")
+
+        print(f"Building varied background ({duration:.1f}s) from {len(video_files)} video(s)...")
+
+        # Shuffle so we start with a random video each time
+        pool = video_files.copy()
+        random.shuffle(pool)
+
+        source_clips = []   # kept open until caller finishes rendering
+        segments = []
+        total_so_far = 0.0
+        pool_idx = 0
+
+        while total_so_far < duration:
+            # Cycle through the shuffled pool; re-shuffle every full cycle
+            if pool_idx >= len(pool):
+                pool_idx = 0
+                random.shuffle(pool)
+
+            vid_path = pool[pool_idx]
+            pool_idx += 1
+
+            try:
+                clip = VideoFileClip(vid_path)
+                clip_duration = clip.duration
+
+                if clip_duration < 4:          # too short to be useful
+                    clip.close()
+                    continue
+
+                # How much more do we need?
+                still_needed = duration - total_so_far
+                # Aim for 8-25 s segments (but never more than clip length or what's needed)
+                seg_len = min(clip_duration, min(still_needed, random.uniform(8, 25)))
+                seg_len = max(seg_len, min(4, clip_duration))  # at least 4 s
+
+                # Pick a random start inside the clip
+                max_start = max(0.0, clip_duration - seg_len)
+                start = random.uniform(0, max_start)
+
+                seg = clip.subclipped(start, start + seg_len)
+                seg = seg.resized((self.video_width, self.video_height))
+
+                # Keep source clip open — frames are read lazily at render time.
+                # Closing here would destroy the reader and crash during compositing.
+                source_clips.append(clip)
+                segments.append(seg)
+                total_so_far += seg_len
+
+                name = os.path.basename(vid_path)
+                print(f"  + {name}  [{start:.1f}s – {start+seg_len:.1f}s]  ({seg_len:.1f}s)")
+
+            except Exception as e:
+                print(f"  Skipping {os.path.basename(vid_path)}: {e}")
+                continue
+
+            # Safety valve: if somehow we can't fill duration, bail out
+            if pool_idx > len(pool) * 5 and total_so_far < 1:
+                raise RuntimeError("Could not load any gameplay segments")
+
+        if not segments:
+            raise RuntimeError("No gameplay segments were built")
+
+        background = concatenate_videoclips(segments, method="compose")
+        background = background.subclipped(0, duration)
+
+        print(f"  Background ready: {len(segments)} segments, {background.duration:.1f}s total")
+        return background, source_clips
+
+    def create_scene_background(self, story_text: str, word_timings: list,
+                                 audio_duration: float, story_id: str) -> str:
+        """
+        Generate AI scene backgrounds for a story.
+        Pipeline: story_text -> Ollama scenes -> SDXL images -> Ken Burns clips -> composite
+
+        Returns:
+            Path to composited background clip (.mp4), or None on failure.
+        """
+        if not AI_BACKGROUNDS_AVAILABLE:
+            return None
+
+        print("\n=== AI BACKGROUND GENERATION ===")
+
+        # 1. Extract scenes via Ollama (falls back to keyword extraction)
+        print("Step 1/3: Extracting visual scenes from story...")
+        scenes = extract_scenes(
+            story_text=story_text,
+            word_timings=word_timings,
+            audio_duration=audio_duration,
+            num_scenes=TARGET_SCENES,
+        )
+        print(f"  Got {len(scenes)} scenes")
+
+        if not scenes:
+            print("  No scenes extracted, falling back to gameplay")
+            return None
+
+        # 2. Generate images via SDXL Turbo
+        print("Step 2/3: Generating scene images with SDXL Turbo...")
+        generator = SceneImageGenerator()
+        scenes = generator.generate_all_scenes(scenes, story_id)
+
+        if not scenes:
+            print("  Image generation failed, falling back to gameplay")
+            return None
+
+        # 3. Animate with Ken Burns + crossfade transitions
+        print("Step 3/3: Animating scenes with Ken Burns effect...")
+        background_clip = create_scene_clips(
+            scenes=scenes,
+            video_width=self.video_width,
+            video_height=self.video_height,
+            fps=self.fps,
+        )
+
+        # Export as temporary video file
+        bg_output_path = os.path.join(GENERATED_SCENES_DIR, story_id, "background.mp4")
+        os.makedirs(os.path.dirname(bg_output_path), exist_ok=True)
+
+        background_clip.write_videofile(
+            bg_output_path,
+            fps=self.fps,
+            codec='libx264',
+            preset='fast',
+            threads=multiprocessing.cpu_count(),
+            audio=False,
+            logger=None,
+        )
+
+        # Clean up the clip object
+        background_clip.close()
+
+        print(f"=== AI background ready: {bg_output_path} ===\n")
+        return bg_output_path
+
     def create_progress_bar(self, current_word_index: int, total_words: int, duration: float) -> TextClip:
         """Create a simple progress indicator"""
         progress = int((current_word_index / total_words) * 20) if total_words > 0 else 0
@@ -589,13 +818,14 @@ class DynamicTextVideoGenerator:
             font="fonts/Montserrat-Black.ttf"
         ).with_position(('center', 50)).with_duration(duration)
     
-    def create_dynamic_video(self, gameplay_path: str, audio_path: str, text: str,
+    def create_dynamic_video(self, background_path: str, audio_path: str, text: str,
                            output_path: str, part_number: int = None, subreddit: str = "AskReddit",
                            logo_path: str = "logo/Redit logo.png",
-                           word_timings=None) -> str:
+                           word_timings=None, is_ai_background: bool = False,
+                           background_clip=None) -> str:
         """
         Create video with dynamic text highlighting - YOUTUBE SHORTS 2025-2026 OPTIMIZED
-        
+
         FIXES APPLIED:
         - Header positioned in safe zone (y=200+) via header.py
         - Faststart optimization for instant playback
@@ -603,23 +833,28 @@ class DynamicTextVideoGenerator:
         """
         print(f"Creating DYNAMIC video: {os.path.basename(output_path)}")
 
-        # Load gameplay video
-        gameplay = VideoFileClip(gameplay_path)
-
         # Get audio duration
         audio = AudioSegment.from_file(audio_path)
         audio_duration = len(audio) / 1000.0
 
-        # Resize gameplay to TikTok format
-        gameplay = gameplay.resized((self.video_width, self.video_height))
+        if background_clip is not None:
+            # Pre-built multi-segment clip (already resized + trimmed to audio_duration)
+            gameplay = background_clip
+        else:
+            # Load single background video from path (fallback / AI background)
+            gameplay = VideoFileClip(background_path)
 
-        # Loop gameplay if needed
-        if gameplay.duration < audio_duration:
-            loops = int(audio_duration / gameplay.duration) + 1
-            gameplay = gameplay.looped(n=loops)
+            if not is_ai_background:
+                # Resize gameplay to TikTok format
+                gameplay = gameplay.resized((self.video_width, self.video_height))
 
-        # Trim to audio length
-        gameplay = gameplay.subclipped(0, audio_duration)
+                # Loop gameplay if needed
+                if gameplay.duration < audio_duration:
+                    loops = int(audio_duration / gameplay.duration) + 1
+                    gameplay = gameplay.looped(n=loops)
+
+                # Trim to audio length
+                gameplay = gameplay.subclipped(0, audio_duration)
 
         # ═══════════════════════════════════════════════════════════════════
         # HEADER — centered on screen, visible for first 4.5 seconds
@@ -651,8 +886,17 @@ class DynamicTextVideoGenerator:
         # Load and add audio
         audio_clip = AudioFileClip(audio_path)
 
-        # Composite everything: gameplay + header + captions
+        # Dog reaction overlay (above subtitles) — disabled for now
+        # from dog_overlay import create_dog_overlay_clip
+        # dog_clips = create_dog_overlay_clip(text, audio_duration,
+        #                                     word_timings=word_timings,
+        #                                     start_time=4.5)
+        dog_clips = []
+
+        # Composite everything: gameplay + header + captions + dog overlay
         all_clips = [gameplay] + reddit_header + dynamic_text_clips
+        if dog_clips:
+            all_clips += dog_clips
         final_video = CompositeVideoClip(all_clips)
         final_video = final_video.with_audio(audio_clip)
         
@@ -675,12 +919,20 @@ class DynamicTextVideoGenerator:
         )
         
         # Clean up resources
-        gameplay.close()
+        # Only close gameplay if we opened it here (not if caller passed background_clip)
+        if background_clip is None:
+            gameplay.close()
         for clip in reddit_header:
             clip.close()
         audio_clip.close()
         for clip in dynamic_text_clips:
             clip.close()
+        if dog_clips:
+            for clip in dog_clips:
+                try:
+                    clip.close()
+                except Exception:
+                    pass
         final_video.close()
 
         print(f"✓ DYNAMIC video created: {output_path}")
@@ -724,21 +976,37 @@ class DynamicTextVideoGenerator:
             print(f"YouTube upload error: {e}")
 
     def _try_tiktok_upload(self, video_path: str, story: Dict):
-        """Upload a video to TikTok if cookies file exists."""
+        """Upload a video to TikTok if cookies file exists.
+
+        Runs in a subprocess to isolate Playwright's event loop from the main
+        process (prevents 'Sync API inside asyncio loop' errors on 2nd+ videos).
+        """
         if not os.path.exists("tiktok_cookies.txt"):
             print("TikTok upload skipped: no tiktok_cookies.txt found")
             return
 
         try:
-            uploader = TikTokVideoUploader()
-
             title = story['title'][:150]
             subreddit = story.get('subreddit', 'AskReddit')
             tags = ["Reddit", "RedditStories", subreddit]
 
-            result = uploader.upload_video(video_path, title, tags=tags)
+            # Run in subprocess to isolate Playwright's asyncio loop
+            ctx = multiprocessing.get_context('spawn')
+            result_queue = ctx.Queue()
+            proc = ctx.Process(
+                target=_tiktok_upload_worker,
+                args=(video_path, title, tags, "tiktok_cookies.txt", result_queue)
+            )
+            proc.start()
+            proc.join(timeout=300)  # 5-minute timeout
 
-            if result:
+            if proc.is_alive():
+                proc.terminate()
+                print("TikTok upload timed out, continuing...")
+                return
+
+            success = not result_queue.empty() and result_queue.get()
+            if success:
                 cursor = self.conn.cursor()
                 cursor.execute(
                     "INSERT INTO uploaded_videos (post_id, video_path, platform, privacy) "
@@ -786,7 +1054,14 @@ class DynamicTextVideoGenerator:
             clean_text = ' '.join(words[:500]) + "..."
 
         print(f"Text length: {len(clean_text)} characters, {len(clean_text.split())} words")
-        
+
+        # Lightly paraphrase for platform originality (Ollama; falls back silently)
+        try:
+            from story_paraphraser import paraphrase_story
+            clean_text = paraphrase_story(clean_text)
+        except Exception as e:
+            print(f"Paraphraser import failed: {e}")
+
         # File names
         video_filename = f"{story['id']}_dynamic.mp4"
         audio_filename = f"temp_audio_{story['id']}.mp3"
@@ -798,16 +1073,46 @@ class DynamicTextVideoGenerator:
             # Generate TikTok-style audio (now returns word timings too)
             audio_duration, word_timings = self.generate_audio(clean_text, audio_path, voice_type="tiktok")
 
-            # Select gameplay
-            gameplay_path = self.select_random_gameplay(gameplay_folder)
+            # AI background disabled — always use gameplay video
+            # (create_scene_background commented out to avoid SDXL hangs)
+            background_path = None
+            is_ai_background = False
+            # if AI_BACKGROUNDS_AVAILABLE:
+            #     try:
+            #         background_path = self.create_scene_background(
+            #             clean_text, word_timings, audio_duration, story['id']
+            #         )
+            #         if background_path:
+            #             is_ai_background = True
+            #     except Exception as e:
+            #         print(f"AI background generation failed: {e}")
+            #         import traceback
+            #         traceback.print_exc()
+
+            print("Using biking gameplay videos as background")
+            bg_clip, bg_sources = self.build_gameplay_background(gameplay_folder, audio_duration)
 
             # Create dynamic video with ground-truth word timings
             final_video = self.create_dynamic_video(
-                gameplay_path, audio_path, clean_text, video_path,
+                background_path=None, audio_path=audio_path, text=clean_text,
+                output_path=video_path,
                 subreddit=story['subreddit'],
                 logo_path=logo_path,
-                word_timings=word_timings
+                word_timings=word_timings,
+                is_ai_background=is_ai_background,
+                background_clip=bg_clip,
             )
+
+            # NOW safe to close — video has been fully written to disk
+            try:
+                bg_clip.close()
+            except Exception:
+                pass
+            for src in bg_sources:
+                try:
+                    src.close()
+                except Exception:
+                    pass
             
             # Mark as processed (skip if already exists)
             try:
@@ -816,7 +1121,7 @@ class DynamicTextVideoGenerator:
                 pass  # Already in database, that's fine
 
             # Upload to YouTube if credentials are available
-            # self._try_youtube_upload(final_video, story)
+            self._try_youtube_upload(final_video, story)
 
             # Upload to TikTok if cookies are available
             self._try_tiktok_upload(final_video, story)
@@ -885,7 +1190,7 @@ def main():
     
     # Configuration
     subreddit = "AmItheAsshole"
-    num_videos = 4
+    num_videos = 2
     
     print(f"\n🎬 Generating {num_videos} DYNAMIC videos from r/{subreddit}")
     print("=" * 60)
@@ -931,10 +1236,10 @@ def main():
             if videos:
                 print(f"✓ Created {len(videos)} video(s) in {story_duration:.1f}s")
 
-            # Wait 3 minutes between videos to avoid rate limits
+            # Wait 1 minute between videos to avoid rate limits
             if i < len(stories) - 1:
-                print("Waiting 3 minutes before next video...")
-                time.sleep(180)
+                print("Waiting 1 minute before next video...")
+                time.sleep(60)
         
         end_time = datetime.now()
         total_duration = (end_time - start_time).total_seconds()
