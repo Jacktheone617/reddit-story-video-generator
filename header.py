@@ -157,28 +157,34 @@ def create_reddit_header(title: str, author: str = "u/BrokenStories",
 
     clips = []
 
+    # Scale all pixel values relative to 720p baseline
+    scale = video_width / 720
+
     # === LAYOUT CONSTANTS ===
-    SIDE_PADDING = 40
-    LOGO_SIZE = 160
-    BOX_RADIUS = 24
+    SIDE_PADDING = int(40 * scale)
+    LOGO_SIZE = int(160 * scale)
+    BOX_RADIUS = int(24 * scale)
 
     box_width = video_width - (SIDE_PADDING * 2)
     box_left_edge = (video_width - box_width) // 2  # Horizontally centered
 
     # Title spans the full box width with padding on each side
-    title_padding = 40  # Gap between title and box edges
+    title_padding = int(40 * scale)  # Gap between title and box edges
     title_width = box_width - (title_padding * 2)
 
     # === DYNAMIC FONT SIZING ===
     # Uses wrap_text() to guarantee whole words stay together
-    MAX_TITLE_HEIGHT = 100
+    MAX_TITLE_HEIGHT = int(100 * scale)
     display_title = title
-    title_font_size = 38
+    title_font_size = int(38 * scale)
     font_path = "fonts/Montserrat-Black.ttf"
     # Account for margin (20px each side) when wrapping
-    wrap_width = title_width - 40
+    wrap_width = title_width - int(40 * scale)
 
-    for fs in range(38, 22, -2):
+    fs_start = int(38 * scale)
+    fs_end = int(22 * scale)
+    fs_step = max(1, int(2 * scale))
+    for fs in range(fs_start, fs_end, -fs_step):
         wrapped = wrap_text(display_title, font_path, fs, wrap_width)
         title_clip = TextClip(
             text=wrapped,
@@ -186,7 +192,7 @@ def create_reddit_header(title: str, author: str = "u/BrokenStories",
             font_size=fs,
             color="#1a1a1b",
             method="label",
-            margin=(20, 20)
+            margin=(int(20 * scale), int(20 * scale))
         )
         if title_clip.size[1] and title_clip.size[1] <= MAX_TITLE_HEIGHT:
             title_font_size = fs
@@ -195,25 +201,25 @@ def create_reddit_header(title: str, author: str = "u/BrokenStories",
     # Last resort: truncate if still too tall at smallest font
     if title_clip.size[1] and title_clip.size[1] > MAX_TITLE_HEIGHT:
         display_title = title[:90] + "..."
-        wrapped = wrap_text(display_title, font_path, 24, wrap_width)
+        wrapped = wrap_text(display_title, font_path, int(24 * scale), wrap_width)
         title_clip = TextClip(
             text=wrapped,
             font=font_path,
-            font_size=24,
+            font_size=int(24 * scale),
             color="#1a1a1b",
             method="label",
-            margin=(20, 20)
+            margin=(int(20 * scale), int(20 * scale))
         )
-        title_font_size = 24
+        title_font_size = int(24 * scale)
 
-    title_height = title_clip.size[1] if title_clip.size[1] else 60
+    title_height = title_clip.size[1] if title_clip.size[1] else int(60 * scale)
 
     # === BOX DIMENSIONS ===
-    emoji_height = 50
-    right_side_height = 40 + emoji_height + 10 + title_height
+    emoji_height = int(50 * scale)
+    right_side_height = int(40 * scale) + emoji_height + int(10 * scale) + title_height
     content_height = max(LOGO_SIZE, right_side_height)
-    engagement_row_height = 40
-    box_height = content_height + 20 + engagement_row_height + 20
+    engagement_row_height = int(40 * scale)
+    box_height = content_height + int(20 * scale) + engagement_row_height + int(20 * scale)
 
     # === VERTICALLY CENTER THE HEADER ===
     box_top = (video_height - box_height) // 2
@@ -228,8 +234,8 @@ def create_reddit_header(title: str, author: str = "u/BrokenStories",
         radius=BOX_RADIUS,
         duration=duration,
         shadow_color=(0, 0, 0, 50),
-        blur_radius=12,
-        offset=(4, 6)
+        blur_radius=int(12 * scale),
+        offset=(int(4 * scale), int(6 * scale))
     )
     shadow_x = box_left_edge - shadow_pad + shadow_offset[0]
     shadow_y = box_top - shadow_pad + shadow_offset[1]
@@ -243,7 +249,7 @@ def create_reddit_header(title: str, author: str = "u/BrokenStories",
         color=(254, 255, 255),  # #FEFFFF
         duration=duration,
         border_color=(255, 69, 0),  # Reddit orange border
-        border_width=3
+        border_width=int(3 * scale)
     ).with_position((box_left_edge, box_top))
     clips.append(header_bg)
 
@@ -258,8 +264,8 @@ def create_reddit_header(title: str, author: str = "u/BrokenStories",
         print(f"Logo not found: {logo_path}")
 
     # === EMOJI REACTIONS — just right of logo ===
-    emoji_x = logo_x + LOGO_SIZE - 22
-    emoji_y = logo_y + LOGO_SIZE - emoji_height - 32
+    emoji_x = logo_x + LOGO_SIZE - int(22 * scale)
+    emoji_y = logo_y + LOGO_SIZE - emoji_height - int(32 * scale)
 
     emoji_path = "logo/emijeys.png"
     if os.path.exists(emoji_path):
@@ -269,16 +275,16 @@ def create_reddit_header(title: str, author: str = "u/BrokenStories",
         clips.append(emoji_strip)
 
     # === CHANNEL NAME + VERIFIED — just above the emojis ===
-    channel_name_y = emoji_y - 42
+    channel_name_y = emoji_y - int(42 * scale)
     channel_name = TextClip(
         text="Reddit Tales",
         font="fonts/Montserrat-Black.ttf",
-        font_size=24,
+        font_size=int(24 * scale),
         color="#1a1a1b",
-        size=(250, None),
-        margin=(5, 5)
+        size=(int(250 * scale), None),
+        margin=(int(5 * scale), int(5 * scale))
     )
-    channel_name_x = emoji_x - 45
+    channel_name_x = emoji_x - int(45 * scale)
     channel_name = channel_name.with_position((channel_name_x, channel_name_y)).with_duration(duration)
     clips.append(channel_name)
 
@@ -287,23 +293,23 @@ def create_reddit_header(title: str, author: str = "u/BrokenStories",
     verified_path = "logo/verified.png"
     if os.path.exists(verified_path):
         verified = ImageClip(verified_path)
-        verified = verified.resized((22, 22))
-        verified_x = channel_name_x + channel_name_width_actual - 15
-        verified_y = channel_name_y + 4
+        verified = verified.resized((int(22 * scale), int(22 * scale)))
+        verified_x = channel_name_x + channel_name_width_actual - int(15 * scale)
+        verified_y = channel_name_y + int(4 * scale)
         verified = verified.with_position((verified_x, verified_y)).with_duration(duration)
         clips.append(verified)
 
     # === POST TITLE — centered in box, BELOW the emojis ===
-    title_y = emoji_y + emoji_height + 2
-    title_x = box_left_edge + title_padding - 10
+    title_y = emoji_y + emoji_height + int(2 * scale)
+    title_x = box_left_edge + title_padding - int(10 * scale)
     title_clip = title_clip.with_position((title_x, title_y)).with_duration(duration)
 
     # === ENGAGEMENT METRICS — below the logo/content area ===
-    engagement_y = box_top + content_height + 20
+    engagement_y = box_top + content_height + int(20 * scale)
 
     hearts_path = "logo/harts&coments.png"
-    hearts_x = box_left_edge + 40
-    hearts_height = 28
+    hearts_x = box_left_edge + int(40 * scale)
+    hearts_height = int(28 * scale)
 
     if os.path.exists(hearts_path):
         hearts = ImageClip(hearts_path)
@@ -312,8 +318,8 @@ def create_reddit_header(title: str, author: str = "u/BrokenStories",
         clips.append(hearts)
 
     share_path = "logo/share.png"
-    share_offset = 100
-    share_height = 28
+    share_offset = int(100 * scale)
+    share_height = int(28 * scale)
 
     if os.path.exists(share_path):
         share = ImageClip(share_path)

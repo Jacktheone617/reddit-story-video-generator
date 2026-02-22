@@ -175,6 +175,8 @@ def create_dynamic_text_clips(text: str, duration: float, video_width: int,
     if delay > 0:
         print(f"Subtitle delay: {delay:.1f}s (waiting for header)")
 
+    scale = video_width / 720
+
     segments = create_word_segments(text, duration, word_timings=word_timings)
     text_clips = []
 
@@ -201,14 +203,14 @@ def create_dynamic_text_clips(text: str, duration: float, video_width: int,
             TextClip(
                 text=segment['word'],
                 font="fonts/Montserrat-Black.ttf",
-                font_size=64,
+                font_size=int(64 * scale),
                 color="white",
                 stroke_color="black",
-                stroke_width=6,
-                size=(video_width - 80, 150),  # Extra height prevents stroke clipping
+                stroke_width=int(6 * scale),
+                size=(video_width - int(80 * scale), int(150 * scale)),  # Extra height prevents stroke clipping
                 method="caption"                     # IMPORTANT
             )
-            .with_position(('center', video_height - 380))
+            .with_position(('center', video_height - int(380 * scale)))
             .with_start(segment['start'] + delay)
             .with_duration(extended_duration)
         )

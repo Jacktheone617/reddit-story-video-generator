@@ -52,17 +52,6 @@ from subtitles import create_dynamic_text_clips
 from youtube_uploader import YouTubeUploader
 from tiktok_upload import TikTokVideoUploader
 
-# AI Background Generation (optional - falls back to gameplay if unavailable)
-try:
-    from scene_extractor import extract_scenes, generate_fallback_scenes
-    from image_generator import SceneImageGenerator
-    from scene_animator import create_scene_clips
-    from ai_config import GENERATED_SCENES_DIR, TARGET_SCENES
-    AI_BACKGROUNDS_AVAILABLE = True
-    print("AI background generation modules loaded")
-except ImportError as e:
-    AI_BACKGROUNDS_AVAILABLE = False
-    print(f"AI backgrounds not available ({e}), using gameplay fallback")
 
 
 def _tiktok_upload_worker(video_path, title, tags, cookies_path, result_queue):
@@ -139,8 +128,8 @@ class DynamicTextVideoGenerator:
         print("Spell/grammar checker ready")
 
         # TikTok video settings (9:16 aspect ratio) - OPTIMIZED FOR YOUTUBE SHORTS 2025-2026
-        self.video_width = 720   # Optimized for mobile
-        self.video_height = 1280 # 9:16 aspect ratio
+        self.video_width = 2160  # 4K vertical
+        self.video_height = 3840 # 9:16 aspect ratio
         self.fps = 24
         
     def init_database(self):
@@ -739,90 +728,24 @@ class DynamicTextVideoGenerator:
         print(f"  Background ready: {len(segments)} segments, {background.duration:.1f}s total")
         return background, source_clips
 
-    def create_scene_background(self, story_text: str, word_timings: list,
-                                 audio_duration: float, story_id: str) -> str:
-        """
-        Generate AI scene backgrounds for a story.
-        Pipeline: story_text -> Ollama scenes -> SDXL images -> Ken Burns clips -> composite
-
-        Returns:
-            Path to composited background clip (.mp4), or None on failure.
-        """
-        if not AI_BACKGROUNDS_AVAILABLE:
-            return None
-
-        print("\n=== AI BACKGROUND GENERATION ===")
-
-        # 1. Extract scenes via Ollama (falls back to keyword extraction)
-        print("Step 1/3: Extracting visual scenes from story...")
-        scenes = extract_scenes(
-            story_text=story_text,
-            word_timings=word_timings,
-            audio_duration=audio_duration,
-            num_scenes=TARGET_SCENES,
-        )
-        print(f"  Got {len(scenes)} scenes")
-
-        if not scenes:
-            print("  No scenes extracted, falling back to gameplay")
-            return None
-
-        # 2. Generate images via SDXL Turbo
-        print("Step 2/3: Generating scene images with SDXL Turbo...")
-        generator = SceneImageGenerator()
-        scenes = generator.generate_all_scenes(scenes, story_id)
-
-        if not scenes:
-            print("  Image generation failed, falling back to gameplay")
-            return None
-
-        # 3. Animate with Ken Burns + crossfade transitions
-        print("Step 3/3: Animating scenes with Ken Burns effect...")
-        background_clip = create_scene_clips(
-            scenes=scenes,
-            video_width=self.video_width,
-            video_height=self.video_height,
-            fps=self.fps,
-        )
-
-        # Export as temporary video file
-        bg_output_path = os.path.join(GENERATED_SCENES_DIR, story_id, "background.mp4")
-        os.makedirs(os.path.dirname(bg_output_path), exist_ok=True)
-
-        background_clip.write_videofile(
-            bg_output_path,
-            fps=self.fps,
-            codec='libx264',
-            preset='fast',
-            threads=multiprocessing.cpu_count(),
-            audio=False,
-            logger=None,
-        )
-
-        # Clean up the clip object
-        background_clip.close()
-
-        print(f"=== AI background ready: {bg_output_path} ===\n")
-        return bg_output_path
-
     def create_progress_bar(self, current_word_index: int, total_words: int, duration: float) -> TextClip:
         """Create a simple progress indicator"""
         progress = int((current_word_index / total_words) * 20) if total_words > 0 else 0
         progress_bar = "█" * progress + "░" * (20 - progress)
         progress_text = f"{progress_bar} {current_word_index}/{total_words}"
         
+        scale = self.video_width / 720
         return TextClip(
             text=progress_text,
-            font_size=24,
+            font_size=int(24 * scale),
             color='cyan',
             font="fonts/Montserrat-Black.ttf"
-        ).with_position(('center', 50)).with_duration(duration)
+        ).with_position(('center', int(50 * scale))).with_duration(duration)
     
     def create_dynamic_video(self, background_path: str, audio_path: str, text: str,
                            output_path: str, part_number: int = None, subreddit: str = "AskReddit",
                            logo_path: str = "logo/Redit logo.png",
-                           word_timings=None, is_ai_background: bool = False,
-                           background_clip=None) -> str:
+                           word_timings=None, background_clip=None) -> str:
         """
         Create video with dynamic text highlighting - YOUTUBE SHORTS 2025-2026 OPTIMIZED
 
@@ -844,17 +767,16 @@ class DynamicTextVideoGenerator:
             # Load single background video from path (fallback / AI background)
             gameplay = VideoFileClip(background_path)
 
-            if not is_ai_background:
-                # Resize gameplay to TikTok format
-                gameplay = gameplay.resized((self.video_width, self.video_height))
+            # Resize gameplay to video format
+            gameplay = gameplay.resized((self.video_width, self.video_height))
 
-                # Loop gameplay if needed
-                if gameplay.duration < audio_duration:
-                    loops = int(audio_duration / gameplay.duration) + 1
-                    gameplay = gameplay.looped(n=loops)
+            # Loop gameplay if needed
+            if gameplay.duration < audio_duration:
+                loops = int(audio_duration / gameplay.duration) + 1
+                gameplay = gameplay.looped(n=loops)
 
-                # Trim to audio length
-                gameplay = gameplay.subclipped(0, audio_duration)
+            # Trim to audio length
+            gameplay = gameplay.subclipped(0, audio_duration)
 
         # ═══════════════════════════════════════════════════════════════════
         # HEADER — centered on screen, visible for first 4.5 seconds
@@ -886,17 +808,8 @@ class DynamicTextVideoGenerator:
         # Load and add audio
         audio_clip = AudioFileClip(audio_path)
 
-        # Dog reaction overlay (above subtitles) — disabled for now
-        # from dog_overlay import create_dog_overlay_clip
-        # dog_clips = create_dog_overlay_clip(text, audio_duration,
-        #                                     word_timings=word_timings,
-        #                                     start_time=4.5)
-        dog_clips = []
-
-        # Composite everything: gameplay + header + captions + dog overlay
+        # Composite everything: gameplay + header + captions
         all_clips = [gameplay] + reddit_header + dynamic_text_clips
-        if dog_clips:
-            all_clips += dog_clips
         final_video = CompositeVideoClip(all_clips)
         final_video = final_video.with_audio(audio_clip)
         
@@ -927,12 +840,6 @@ class DynamicTextVideoGenerator:
         audio_clip.close()
         for clip in dynamic_text_clips:
             clip.close()
-        if dog_clips:
-            for clip in dog_clips:
-                try:
-                    clip.close()
-                except Exception:
-                    pass
         final_video.close()
 
         print(f"✓ DYNAMIC video created: {output_path}")
@@ -1073,22 +980,6 @@ class DynamicTextVideoGenerator:
             # Generate TikTok-style audio (now returns word timings too)
             audio_duration, word_timings = self.generate_audio(clean_text, audio_path, voice_type="tiktok")
 
-            # AI background disabled — always use gameplay video
-            # (create_scene_background commented out to avoid SDXL hangs)
-            background_path = None
-            is_ai_background = False
-            # if AI_BACKGROUNDS_AVAILABLE:
-            #     try:
-            #         background_path = self.create_scene_background(
-            #             clean_text, word_timings, audio_duration, story['id']
-            #         )
-            #         if background_path:
-            #             is_ai_background = True
-            #     except Exception as e:
-            #         print(f"AI background generation failed: {e}")
-            #         import traceback
-            #         traceback.print_exc()
-
             print("Using biking gameplay videos as background")
             bg_clip, bg_sources = self.build_gameplay_background(gameplay_folder, audio_duration)
 
@@ -1099,7 +990,6 @@ class DynamicTextVideoGenerator:
                 subreddit=story['subreddit'],
                 logo_path=logo_path,
                 word_timings=word_timings,
-                is_ai_background=is_ai_background,
                 background_clip=bg_clip,
             )
 
