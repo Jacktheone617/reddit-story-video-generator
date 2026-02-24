@@ -7,7 +7,10 @@ never breaks.
 """
 
 import requests
-from ai_config import OLLAMA_URL, OLLAMA_MODEL, OLLAMA_TIMEOUT
+
+OLLAMA_URL = "http://localhost:11434/api/generate"
+OLLAMA_MODEL = "llama3"
+OLLAMA_TIMEOUT = 120
 
 
 _PROMPT_TEMPLATE = """\

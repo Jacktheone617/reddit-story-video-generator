@@ -128,8 +128,8 @@ class DynamicTextVideoGenerator:
         print("Spell/grammar checker ready")
 
         # TikTok video settings (9:16 aspect ratio) - OPTIMIZED FOR YOUTUBE SHORTS 2025-2026
-        self.video_width = 2160  # 4K vertical
-        self.video_height = 3840 # 9:16 aspect ratio
+        self.video_width = 720   # Optimized for mobile
+        self.video_height = 1280 # 9:16 aspect ratio
         self.fps = 24
         
     def init_database(self):
