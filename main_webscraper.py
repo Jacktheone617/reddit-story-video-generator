@@ -1013,8 +1013,8 @@ class DynamicTextVideoGenerator:
             # Upload to YouTube if credentials are available
             self._try_youtube_upload(final_video, story)
 
-            # Upload to TikTok if cookies are available
-            self._try_tiktok_upload(final_video, story)
+            # TikTok auto-upload disabled — post manually
+            # self._try_tiktok_upload(final_video, story)
 
             return [final_video]
             
