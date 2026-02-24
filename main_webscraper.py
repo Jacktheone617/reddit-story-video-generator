@@ -286,8 +286,8 @@ class DynamicTextVideoGenerator:
                     'subreddit': subreddit_name
                 })
 
-            # Sort by engagement ratio (most discussion per upvote = most dramatic)
-            candidates.sort(key=lambda x: x['engagement_ratio'], reverse=True)
+            # Sort by score (most upvotes = most popular)
+            candidates.sort(key=lambda x: x['score'], reverse=True)
 
             # Take the top results
             stories = candidates[:limit]
@@ -1099,8 +1099,8 @@ def main():
         stories = generator.scrape_reddit_stories(
             subreddit, num_videos,
             allow_reprocess=False,
-            min_score=50,
-            sort="hot"
+            min_score=500,
+            sort="top"
         )
         
         if not stories:
