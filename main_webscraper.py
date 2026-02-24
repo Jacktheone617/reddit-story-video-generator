@@ -828,7 +828,7 @@ class DynamicTextVideoGenerator:
             threads=multiprocessing.cpu_count(),
             temp_audiofile='temp-audio.m4a',
             remove_temp=True,
-            ffmpeg_params=['-movflags', '+faststart']  # ✅ INSTANT PLAYBACK!
+            ffmpeg_params=['-movflags', '+faststart', '-b:v', '3M', '-maxrate', '3M', '-bufsize', '6M']
         )
         
         # Clean up resources

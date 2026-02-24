@@ -99,7 +99,7 @@ class YouTubeUploader:
         }
 
         media = MediaFileUpload(video_path, mimetype="video/mp4",
-                                resumable=True, chunksize=10 * 1024 * 1024)
+                                resumable=True, chunksize=50 * 1024 * 1024)
 
         request = self._service.videos().insert(
             part="snippet,status", body=body, media_body=media)
